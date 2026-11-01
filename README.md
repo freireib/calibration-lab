@@ -44,3 +44,9 @@ The Brier loss for this binary question is `(probTrue - actualTrue)^2`. Lower is
 ## Attribution
 
 Trivia data provided by [Open Trivia Database](https://opentdb.com/), released under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Open Trivia DB data may be used and redistributed subject to that license. Original offline fallback questions are included for convenience.
+
+## v0.3 insights update
+
+The confidence calibration plot now includes 95% equal-tailed Bayesian credible intervals for each 10-point confidence bin, based on Jeffreys Beta(1/2,1/2) prior and binomial observations. Each bin lists number correct / total, observed accuracy, and its interval. With few questions, intervals will be wide. Questions within bins are treated as exchangeable; source/category dependence can undermine the nominal interpretation.
+
+The Insights panel also shows a rolling Brier trend with trailing windows of 10, 25, 50 or 100 scored judgments, in chronological order. The daily history remains available. Historical raw answers and `calibration-lab-data-v1` local-storage key are unchanged; there is no reset or migration.
