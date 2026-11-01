@@ -1,0 +1,19 @@
+{
+  "name": "Calibration Lab",
+  "short_name": "Calibration",
+  "description": "Ten daily true/false questions to improve probabilistic calibration",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "theme_color": "#132c37",
+  "background_color": "#f5f7f4",
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
