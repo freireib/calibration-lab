@@ -197,7 +197,7 @@ function renderPractice(){
    if(!save()){day.questions.splice(idx,0,removed);return;}
    selected=null;confidence=75;render();
   });skip.style.marginTop='10px';card.append(skip);
-  card.append(el('p','legend','Skipped questions do not count toward the daily goal or calibration statistics.'));
+  card.append(el('p','legend','Skip only irrelevant or badly worded questions. For an appropriate question whose answer you do not know, choose 50%. Skips do not count toward the daily goal or calibration scores.'));
  }
  node.append(card);
 }
