@@ -5,3 +5,6 @@
 
 /* v0.5 subject pickers */
 .subject-picker{background:var(--white);border:1px solid var(--line);border-radius:13px;padding:11px 14px;margin-bottom:16px;box-shadow:var(--shadow)}.subject-picker summary{font-size:13px;font-weight:700;color:var(--ink);cursor:pointer;list-style-position:inside}.subject-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:15px}.subject-option{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:5px 0}.subject-option input{width:17px;height:17px;accent-color:var(--teal);flex-shrink:0}.subject-picker .legend{margin:10px 0 0}.stats .stat .value{overflow-wrap:anywhere}@media(max-width:380px){.subject-grid{grid-template-columns:1fr}}
+
+/* v0.7 finite-bank warnings */
+.subject-caution{margin:0 0 14px;padding:10px 13px;font-size:12px;line-height:1.5;color:#77500f;background:#fff4df;border:1px solid #f0d7a7;border-radius:12px}.supply-warning{margin-bottom:15px}.supply-warning strong{display:block;margin-bottom:5px}.supply-warning p{margin:5px 0 10px}.supply-warning .secondary-btn{border-color:#d9b970;background:#fff9ed}
