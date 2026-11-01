@@ -169,8 +169,39 @@ function dayStats(day){const valid=day.responses.filter(r=>!r.flagged);const bri
 function getResponses(){const rows=[];for(const day of Object.values(state.days)){day.responses.forEach((r,i)=>{const q=day.questions[i];rows.push({...r,date:day.date,question:q?.prompt||'',category:q?.category||'',subject:subjectOf(q),source:q?.source||'',difficulty:q?.difficulty||'',id:q?.id||''});});}return rows.sort((a,b)=>b.timestamp.localeCompare(a.timestamp));}
 function streak(){let d=new Date();let k=dateKey(d);if(!completed(state.days[k])){d.setDate(d.getDate()-1);k=dateKey(d);}let count=0;while(completed(state.days[k])){count++;d.setDate(d.getDate()-1);k=dateKey(d);}return count;}
 function makeButton(label,cls,onClick){const b=el('button',cls,label);b.type='button';b.addEventListener('click',onClick);return b;}
+function makeSubjectPicker(mode){
+ const isPractice=mode==='practice';
+ const ids=isPractice?state.practiceSubjects:state.insightSubjects;
+ const d=el('details','subject-picker');
+ d.open=isPractice?practiceChooserOpen:insightChooserOpen;
+ d.addEventListener('toggle',()=>{if(isPractice)practiceChooserOpen=d.open;else insightChooserOpen=d.open;});
+ d.append(el('summary','',(isPractice?'Question subjects':'Statistics subjects')+' · '+ids.length+' selected'));
+ const grid=el('div','subject-grid');
+ for(const subject of SUBJECTS){
+  const item=el('label','subject-option');
+  const input=el('input');input.type='checkbox';input.checked=ids.includes(subject.id);
+  input.addEventListener('change',()=>{
+   const current=isPractice?state.practiceSubjects:state.insightSubjects;
+   const next=input.checked?[...current,subject.id]:current.filter(id=>id!==subject.id);
+   if(!next.length){input.checked=true;return;}
+   if(isPractice){
+    state.practiceSubjects=normalizeSubjects(next,DEFAULT_PRACTICE);
+    state.questionQueue=state.questionQueue.filter(q=>state.practiceSubjects.includes(subjectOf(q)));
+    practiceChooserOpen=true;
+   }else{
+    state.insightSubjects=normalizeSubjects(next,ALL_SUBJECTS);
+    insightChooserOpen=true;
+   }
+   save();
+   if(isPractice)renderPractice();else renderInsights();
+  });
+  item.append(input,el('span','',subject.label));grid.append(item);
+ }
+ d.append(grid,el('p','legend',isPractice?'Applies to newly requested questions. Questions already loaded for today can still be answered or skipped.':'Changes the calibration graph, histogram and all score trends without changing saved answers.'));
+ return d;
+}
 function renderPractice(){
- const node=$('#practice-content');node.replaceChildren();const day=state.days[dateKey()];
+ const node=$('#practice-content');node.replaceChildren();node.append(makeSubjectPicker('practice'));const day=state.days[dateKey()];
  if(!day){
   const box=el('div','panel');
   box.append(el('p','micro','Ten answers maintain your streak'),el('h2','','Estimate, commit, learn.'),
