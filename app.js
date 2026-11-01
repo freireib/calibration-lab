@@ -1,4 +1,4 @@
-/* Calibration Lab v0.5: subject selection and selective Brier analysis. */
+/* Calibration Lab v0.6: resilient category loading and transparent retry handling. */
 'use strict';
 const KEY='calibration-lab-data-v1';
 const DAILY_GOAL=10;
@@ -97,28 +97,69 @@ const offlineRaw=[
 const offlineBank=offlineRaw.map(row=>qObj(row[0],row[1],row[2]));
 function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
 function decodeURIComponentSafe(s){try{return decodeURIComponent(s);}catch{return s;}}
-async function loadQuestions(){
+// The trivia provider permits one request per IP every five seconds.
+// Retry throttling, category shortages and duplicate-only results, within a bound.
+const TRIVIA_GAP_MS=5800;
+let nextTriviaRequestAt=0;
+const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+async function loadQuestions(onProgress=()=>{}){
  state.questionQueue=state.questionQueue.filter(q=>state.practiceSubjects.includes(subjectOf(q)));
  const seen=new Set([...state.seen,...state.questionQueue.map(q=>q.id)]);
- if(state.questionQueue.length>=BATCH_SIZE)return;
- try{
-  const ctl=new AbortController();const timer=setTimeout(()=>ctl.abort(),9000);
-  // The API accepts a single category per request.
-  const choices=SUBJECTS.filter(t=>state.practiceSubjects.includes(t.id)&&t.api!==null);
-  const target=state.practiceSubjects.length<=2&&choices.length===state.practiceSubjects.length?choices[Math.floor(Math.random()*choices.length)]:null;
-  const url='https://opentdb.com/api.php?amount='+(target?10:50)+'&type=boolean&encode=url3986'+(target?'&category='+target.api:'');
-  let r;try{r=await fetch(url,{signal:ctl.signal,cache:'no-store'});}finally{clearTimeout(timer);}
-  if(!r.ok)throw Error('HTTP '+r.status);
-  const data=await r.json();if(data.response_code!==0||!Array.isArray(data.results))throw Error('Trivia API: '+data.response_code);
-  for(const item of data.results){if(item.type!=='boolean')continue;
-   const prompt=decodeURIComponentSafe(item.question),answer=decodeURIComponentSafe(item.correct_answer)==='True';
-   const q=qObj(prompt,answer,decodeURIComponentSafe(item.category),'Open Trivia DB',decodeURIComponentSafe(item.difficulty||''));
-   if(!state.practiceSubjects.includes(subjectOf(q)))continue;
-   if(!seen.has(q.id)){state.questionQueue.push(q);seen.add(q.id);}
+ if(state.questionQueue.length>=BATCH_SIZE)return {count:state.questionQueue.length,issue:null};
+ const choices=SUBJECTS.filter(t=>state.practiceSubjects.includes(t.id)&&t.api!==null);
+ const targeted=state.practiceSubjects.length<=2&&choices.length===state.practiceSubjects.length;
+ let amount=targeted?10:50,issue=null;
+ for(let attempt=0;attempt<3&&state.questionQueue.length<BATCH_SIZE;attempt++){
+  const target=targeted?choices[(Math.floor(Math.random()*choices.length)+attempt)%choices.length]:null;
+  const wait=Math.max(0,nextTriviaRequestAt-Date.now());
+  if(wait>0){onProgress('Waiting for trivia service · '+Math.ceil(wait/1000)+'s');await delay(wait);}
+  onProgress('Finding new '+(target?target.label.toLowerCase():'trivia')+' questions…');
+  const url='https://opentdb.com/api.php?amount='+amount+'&type=boolean&encode=url3986'+(target?'&category='+target.api:'');
+  const ctl=new AbortController();
+  const timer=setTimeout(()=>ctl.abort(),9000);
+  nextTriviaRequestAt=Date.now()+TRIVIA_GAP_MS;
+  try{
+   const response=await fetch(url,{signal:ctl.signal,cache:'no-store'});
+   if(!response.ok)throw Error('HTTP '+response.status);
+   const data=await response.json();
+   if(data.response_code===5){
+    issue='The trivia service is temporarily rate-limiting requests.';
+    nextTriviaRequestAt=Math.max(nextTriviaRequestAt,Date.now()+6500);
+    continue;
+   }
+   if(data.response_code===1||data.response_code===4){
+    issue='There are not enough fresh true/false questions in this subject.';
+    if(amount>1){amount=Math.max(1,Math.floor(amount/2));continue;}
+    break;
+   }
+   if(data.response_code!==0||!Array.isArray(data.results)){
+    issue='The trivia service could not provide questions (code '+data.response_code+').';
+    break;
+   }
+   const before=state.questionQueue.length;
+   for(const item of data.results){
+    if(item.type!=='boolean')continue;
+    const prompt=decodeURIComponentSafe(item.question);
+    const answer=decodeURIComponentSafe(item.correct_answer)==='True';
+    const q=qObj(prompt,answer,decodeURIComponentSafe(item.category),'Open Trivia DB',decodeURIComponentSafe(item.difficulty||''));
+    if(!state.practiceSubjects.includes(subjectOf(q))||seen.has(q.id))continue;
+    state.questionQueue.push(q);seen.add(q.id);
+   }
+   issue=state.questionQueue.length===before?'The available questions in this subject have already been answered.':null;
+  }catch(err){
+   issue=err?.name==='AbortError'?'The trivia request timed out.':'Unable to reach the trivia service.';
+   console.info('Trivia load attempt unsuccessful',err);
+  }finally{clearTimeout(timer);}
+ }
+ if(state.questionQueue.length<BATCH_SIZE){
+  for(const q of shuffle([...offlineBank])){
+   if(state.practiceSubjects.includes(subjectOf(q))&&!seen.has(q.id)){
+    state.questionQueue.push(q);seen.add(q.id);
+   }
   }
- }catch(e){console.info('Trivia unavailable; use offline questions.',e);apiError=true;}
- if(state.questionQueue.length<BATCH_SIZE){for(const q of shuffle([...offlineBank])){if(state.practiceSubjects.includes(subjectOf(q))&&!seen.has(q.id)){state.questionQueue.push(q);seen.add(q.id);}}}
+ }
  save();
+ return {count:state.questionQueue.length,issue};
 }
 async function startToday(){
  if(starting)return;
@@ -127,10 +168,10 @@ async function startToday(){
  const target=$('#practice-content');target.replaceChildren();
  const box=el('div','panel');box.append(el('p','muted','Preparing today’s questions…'));target.append(box);
  try{
-  await loadQuestions();
+  const result=await loadQuestions(message=>{const p=target.querySelector('.muted');if(p)p.textContent=message;});
   if(state.questionQueue.length===0){
    target.replaceChildren();const error=el('div','panel');
-   error.append(el('h2','','No new questions available'),el('p','muted','Connect to the internet and try again. Your previous answers are safe.'));
+   error.append(el('h2','','No new questions available'),el('p','muted',result.issue||'No unused questions found in the selected subjects.'),el('p','sm muted','Try again shortly or select additional subjects. Your previous answers and streak are safe.'));
    error.append(makeButton('Try again','primary',startToday));target.append(error);return;
   }
   const today=dateKey();
@@ -149,10 +190,10 @@ async function loadMoreToday(){
  const node=$('#practice-content');const button=node.querySelector('[data-more]');
  if(button){button.disabled=true;button.textContent='Loading questions…';}
  try{
-  await loadQuestions();
+  const result=await loadQuestions(message=>{if(button)button.textContent=message;});
   if(state.questionQueue.length===0){
    render();const box=$('#practice-content .panel');
-   if(box)box.append(el('p','sm muted','No unused questions available right now. Connect to the internet and try again later.'));
+   if(box)box.append(el('p','sm muted',(result.issue||'No unused questions available in the selected subjects.')+' Try again shortly or select more subjects. Your answers and streak have been preserved.'));
    return;
   }
   const batch=state.questionQueue.splice(0,BATCH_SIZE);
