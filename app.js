@@ -1,19 +1,54 @@
-/* Calibration Lab v0.4: focused topics, confidence histogram, optional skip. */
+/* Calibration Lab v0.5: subject selection and selective Brier analysis. */
 'use strict';
 const KEY='calibration-lab-data-v1';
 const DAILY_GOAL=10;
 const BATCH_SIZE=10;
-// Broad factual subjects: avoid obscure entertainment fandoms in calibration training.
-const CORE_CATEGORIES=new Set(['General Knowledge','Science & Nature','Science: Computers','Science: Mathematics','Geography','History','Politics','Art','Animals']);
-function relevantQuestion(q){return q?.source!=='Open Trivia DB'||CORE_CATEGORIES.has(q.category);}
+const SUBJECTS=[
+ {id:'general',label:'General knowledge',api:9},
+ {id:'science',label:'Science & nature',api:17},
+ {id:'computers',label:'Computers',api:18},
+ {id:'math',label:'Mathematics',api:19},
+ {id:'geography',label:'Geography',api:22},
+ {id:'history',label:'History',api:23},
+ {id:'politics',label:'Politics',api:24},
+ {id:'art',label:'Art',api:25},
+ {id:'animals',label:'Animals',api:27},
+ {id:'other',label:'Other / entertainment',api:null}
+];
+const DEFAULT_PRACTICE=SUBJECTS.filter(x=>x.id!=='other').map(x=>x.id);
+const ALL_SUBJECTS=SUBJECTS.map(x=>x.id);
+function subjectOf(q){
+ switch(q?.category){
+ case 'General Knowledge':case 'Language':case 'Mixed':return 'general';
+ case 'Science & Nature':case 'Astronomy':case 'Science':case 'Chemistry':case 'Biology':return 'science';
+ case 'Science: Computers':return 'computers';
+ case 'Science: Mathematics':case 'Mathematics':return 'math';
+ case 'Geography':return 'geography';
+ case 'History':return 'history';
+ case 'Politics':return 'politics';
+ case 'Art':return 'art';
+ case 'Animals':return 'animals';
+ default:return 'other';
+ }
+}
+function normalizeSubjects(raw,fallback){
+ const valid=SUBJECTS.filter(x=>Array.isArray(raw)&&raw.includes(x.id)).map(x=>x.id);
+ return valid.length?valid:[...fallback];
+}
+function hydrateState(v){
+ v.practiceSubjects=normalizeSubjects(v.practiceSubjects,DEFAULT_PRACTICE);
+ v.insightSubjects=normalizeSubjects(v.insightSubjects,ALL_SUBJECTS);
+ v.questionQueue=v.questionQueue.filter(q=>v.practiceSubjects.includes(subjectOf(q)));
+ return v;
+}
 const $=(selector)=>document.querySelector(selector);
 const el=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;};
 const round=(v,d=2)=>Number(v).toFixed(d);
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 function dateKey(date=new Date()){return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;}
-function freshState(){return {version:1,days:{},questionQueue:[],seen:[]};}
-function load(){try{const v=JSON.parse(localStorage.getItem(KEY));if(v&&v.version===1&&v.days&&typeof v.days==='object'&&Array.isArray(v.seen)&&Array.isArray(v.questionQueue)){v.questionQueue=v.questionQueue.filter(relevantQuestion);return v;}}catch(e){console.warn('Could not load local history',e);}return freshState();}
-let state=load(),selected=null,confidence=75,starting=false,apiError=false,rollingWindow=25;
+function freshState(){return hydrateState({version:1,days:{},questionQueue:[],seen:[]});}
+function load(){try{const v=JSON.parse(localStorage.getItem(KEY));if(v&&v.version===1&&v.days&&typeof v.days==='object'&&Array.isArray(v.seen)&&Array.isArray(v.questionQueue))return hydrateState(v);}catch(e){console.warn('Could not load local history',e);}return freshState();}
+let state=load(),selected=null,confidence=75,starting=false,apiError=false,rollingWindow=25,rollingExclude50=false,practiceChooserOpen=false,insightChooserOpen=false;
 function save(){try{localStorage.setItem(KEY,JSON.stringify(state));return true;}catch(e){alert('Unable to save local data. Storage may be full or unavailable. Export your history now.');return false;}}
 function hash(s){let h=2166136261;for(let i=0;i<s.length;i++){h=Math.imul(h^s.charCodeAt(i),16777619);}return (h>>>0).toString(36);}
 function qObj(prompt,answer,category='Mixed',source='Offline practice',difficulty=''){return {id:hash(prompt.toLowerCase().replace(/\s+/g,' ').trim()),type:'boolean',prompt,answer,category,source,difficulty};}
@@ -63,22 +98,26 @@ const offlineBank=offlineRaw.map(row=>qObj(row[0],row[1],row[2]));
 function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
 function decodeURIComponentSafe(s){try{return decodeURIComponent(s);}catch{return s;}}
 async function loadQuestions(){
- state.questionQueue=state.questionQueue.filter(relevantQuestion);
+ state.questionQueue=state.questionQueue.filter(q=>state.practiceSubjects.includes(subjectOf(q)));
  const seen=new Set([...state.seen,...state.questionQueue.map(q=>q.id)]);
  if(state.questionQueue.length>=BATCH_SIZE)return;
  try{
   const ctl=new AbortController();const timer=setTimeout(()=>ctl.abort(),9000);
-  let r;try{r=await fetch('https://opentdb.com/api.php?amount=50&type=boolean&encode=url3986',{signal:ctl.signal,cache:'no-store'});}finally{clearTimeout(timer);}
+  // The API accepts a single category per request.
+  const choices=SUBJECTS.filter(t=>state.practiceSubjects.includes(t.id)&&t.api!==null);
+  const target=state.practiceSubjects.length<=2&&choices.length===state.practiceSubjects.length?choices[Math.floor(Math.random()*choices.length)]:null;
+  const url='https://opentdb.com/api.php?amount='+(target?10:50)+'&type=boolean&encode=url3986'+(target?'&category='+target.api:'');
+  let r;try{r=await fetch(url,{signal:ctl.signal,cache:'no-store'});}finally{clearTimeout(timer);}
   if(!r.ok)throw Error('HTTP '+r.status);
   const data=await r.json();if(data.response_code!==0||!Array.isArray(data.results))throw Error('Trivia API: '+data.response_code);
   for(const item of data.results){if(item.type!=='boolean')continue;
    const prompt=decodeURIComponentSafe(item.question),answer=decodeURIComponentSafe(item.correct_answer)==='True';
    const q=qObj(prompt,answer,decodeURIComponentSafe(item.category),'Open Trivia DB',decodeURIComponentSafe(item.difficulty||''));
-   if(!relevantQuestion(q))continue;
+   if(!state.practiceSubjects.includes(subjectOf(q)))continue;
    if(!seen.has(q.id)){state.questionQueue.push(q);seen.add(q.id);}
   }
  }catch(e){console.info('Trivia unavailable; use offline questions.',e);apiError=true;}
- if(state.questionQueue.length<BATCH_SIZE){for(const q of shuffle([...offlineBank])){if(!seen.has(q.id)){state.questionQueue.push(q);seen.add(q.id);}}}
+ if(state.questionQueue.length<BATCH_SIZE){for(const q of shuffle([...offlineBank])){if(state.practiceSubjects.includes(subjectOf(q))&&!seen.has(q.id)){state.questionQueue.push(q);seen.add(q.id);}}}
  save();
 }
 async function startToday(){
@@ -127,7 +166,7 @@ async function loadMoreToday(){
 }
 function completed(day){return (day?.responses?.length||0)>=DAILY_GOAL;}
 function dayStats(day){const valid=day.responses.filter(r=>!r.flagged);const brier=valid.length?valid.reduce((s,r)=>s+r.brier,0)/valid.length:null;return {valid:valid.length,correct:valid.filter(r=>r.correct).length,brier};}
-function getResponses(){const rows=[];for(const day of Object.values(state.days)){day.responses.forEach((r,i)=>rows.push({...r,date:day.date,question:day.questions[i]?.prompt||'',category:day.questions[i]?.category||'',source:day.questions[i]?.source||'',difficulty:day.questions[i]?.difficulty||'',id:day.questions[i]?.id||''}));}return rows.sort((a,b)=>b.timestamp.localeCompare(a.timestamp));}
+function getResponses(){const rows=[];for(const day of Object.values(state.days)){day.responses.forEach((r,i)=>{const q=day.questions[i];rows.push({...r,date:day.date,question:q?.prompt||'',category:q?.category||'',subject:subjectOf(q),source:q?.source||'',difficulty:q?.difficulty||'',id:q?.id||''});});}return rows.sort((a,b)=>b.timestamp.localeCompare(a.timestamp));}
 function streak(){let d=new Date();let k=dateKey(d);if(!completed(state.days[k])){d.setDate(d.getDate()-1);k=dateKey(d);}let count=0;while(completed(state.days[k])){count++;d.setDate(d.getDate()-1);k=dateKey(d);}return count;}
 function makeButton(label,cls,onClick){const b=el('button',cls,label);b.type='button';b.addEventListener('click',onClick);return b;}
 function renderPractice(){
@@ -333,7 +372,7 @@ function exportCsv(){const cols=['date','timestamp','id','kind','question','cate
 function importJson(file){const reader=new FileReader();reader.onload=()=>{try{const v=JSON.parse(String(reader.result));if(v.version!==1||!v.days||typeof v.days!=='object'||Array.isArray(v.days)||!Array.isArray(v.seen)||!Array.isArray(v.questionQueue))throw Error('Not a Calibration Lab v1 backup.');
  for(const day of Object.values(v.days)){if(!Array.isArray(day.questions)||!Array.isArray(day.responses)||!Number.isInteger(day.cursor))throw Error('Invalid day record.');}
  if(!confirm('Replace all data on this device with the imported backup? Export your current history first if you want to preserve it.'))return;
- const current=state;state={version:1,days:v.days,questionQueue:v.questionQueue,seen:v.seen};if(!save()){state=current;return;}selected=null;confidence=75;render();alert('History restored.');
+ const current=state;state=hydrateState({version:1,days:v.days,questionQueue:v.questionQueue,seen:v.seen,practiceSubjects:v.practiceSubjects||current.practiceSubjects,insightSubjects:v.insightSubjects||current.insightSubjects});if(!save()){state=current;return;}selected=null;confidence=75;render();alert('History restored.');
  }catch(e){alert('Could not restore backup: '+e.message);}};reader.readAsText(file);}
 function renderData(){const node=$('#data-content');node.replaceChildren();const box=el('div','panel');box.append(el('h3','','Backup and restore'),el('p','sm muted','History is stored in this browser/app on this device—not in GitHub or an account. Export JSON backups regularly; use CSV for analysis in Python.'));
  const buttons=el('div','button-row');buttons.append(makeButton('Export JSON backup','secondary-btn',exportJson),makeButton('Export CSV','secondary-btn',exportCsv));
