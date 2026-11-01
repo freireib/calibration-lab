@@ -379,21 +379,76 @@ function makeTrendSvg(days){const s=svg('svg',{viewBox:'0 0 390 205',role:'img',
  if(days.length){s.append(svg('text',{x:L,y:186,class:'chart-tick'},days[0].date.slice(5)));s.append(svg('text',{x:R,y:186,'text-anchor':'end',class:'chart-tick'},days[days.length-1].date.slice(5)));}
  s.append(svg('text',{x:(L+R)/2,y:200,'text-anchor':'middle',class:'chart-label'},'Session date (lower Brier is better)'));return s;
 }
-function renderInsights(){const node=$('#insights-content');node.replaceChildren();const rows=getResponses().filter(r=>!r.flagged);if(!rows.length){node.append(el('div','empty','No scored answers yet. Complete your first set of questions to see calibration data.'));return;}
- const brier=rows.reduce((s,r)=>s+r.brier,0)/rows.length;const correct=rows.filter(r=>r.correct).length;const panel=el('div','panel');const grid=el('div','stats');for(const [val,label] of [[rows.length,'Scored judgments'],[`${round(100*correct/rows.length,1)}%`,'Accuracy'],[round(brier,3),'Mean Brier loss']]){const c=el('div','stat');c.append(el('div','value mono',val),el('div','caption',label));grid.append(c);}panel.append(grid,el('p','message',rows.length<50?'Early data: calibration estimates will be noisy until you accumulate at least several dozen questions.':'Compare calibration bins cautiously; bin-specific sample sizes can still be small.'));node.append(panel);
+function renderInsights(){
+ const node=$('#insights-content');node.replaceChildren();
+ node.append(makeSubjectPicker('insights'));
+ const rows=getResponses().filter(r=>!r.flagged&&state.insightSubjects.includes(r.subject));
+ if(!rows.length){
+  node.append(el('div','empty','No scored answers for these subjects yet. Select other subjects or answer new questions.'));
+  return;
+ }
+ const average=arr=>arr.reduce((sum,r)=>sum+r.brier,0)/arr.length;
+ const confident=rows.filter(r=>r.confidence>50);
+ const retained=confident.length,coverage=100*retained/rows.length;
+ const correct=rows.filter(r=>r.correct).length;
+ const panel=el('div','panel'),grid=el('div','stats');
+ const measures=[
+  [String(rows.length),'Scored judgments'],
+  [round(100*correct/rows.length,1)+'%','Accuracy'],
+  [round(average(rows),3),'Brier · all answers'],
+  [retained?round(average(confident),3):'—','Brier · exclude 50%'],
+  [round(coverage,1)+'%','Coverage · above 50%']
+ ];
+ for(const [value,label] of measures){
+  const cell=el('div','stat');
+  cell.append(el('div','value mono',value),el('div','caption',label));
+  grid.append(cell);
+ }
+ panel.append(grid);
+ panel.append(el('p','message','Trimmed Brier uses '+retained+' of '+rows.length+' answers. It is conditional on confidence above 50%; always compare it with coverage. Full Brier remains the primary score.'+(rows.length<50?' These are early data: bin-level estimates will be noisy.':'')));
+ node.append(panel);
  const bins=calibrationBins(rows);
- const a=el('div','panel chart');a.append(el('h3','','Calibration by confidence'));a.append(makeCalibrationSvg(bins),makeCalibrationTable(bins));
- a.append(el('p','legend','Green dots show observed correctness; amber bars are equal-tailed 95% Bayesian credible intervals using Jeffreys’ Beta(½,½) prior. Dashed diagonal = perfect calibration. Counts are shown for each group. Intervals assume exchangeable questions within each bin; they describe uncertainty in the group accuracy, not the accuracy of any individual answer.'));node.append(a);
+ const a=el('div','panel chart');
+ a.append(el('h3','','Calibration by confidence'),makeCalibrationSvg(bins),makeCalibrationTable(bins));
+ a.append(el('p','legend','Green dots = observed accuracy; amber bars = 95% Bayesian credible intervals with a Jeffreys Beta(½,½) prior. Dashed line = perfect calibration. Intervals assume approximately exchangeable questions within a bin.'));
+ node.append(a);
  const fifty=rows.filter(r=>r.confidence===50).length;
- const hist=el('div','panel chart');hist.append(el('h3','','Confidence histogram'),makeConfidenceHistogramSvg(rows));
- hist.append(el('p','legend',`${fifty} of ${rows.length} scored answers (${round(100*fifty/rows.length,1)}%) used 50% confidence. Counts cover every 5-percentage-point setting; flagged questions are excluded.`));node.append(hist);
+ const hist=el('div','panel chart');
+ hist.append(el('h3','','Confidence histogram'),makeConfidenceHistogramSvg(rows));
+ hist.append(el('p','legend',fifty+' of '+rows.length+' answers ('+round(100*fifty/rows.length,1)+'%) were at exactly 50% confidence. Flagged questions are excluded.'));
+ node.append(hist);
  const rolling=el('div','panel chart');rolling.append(el('h3','','Rolling Brier score'));
+ const modes=el('div','trend-controls');modes.append(el('span','sm muted','Include:'));
+ for(const [mode,label] of [[false,'All answers'],[true,'Exclude 50%']]){
+  const button=makeButton(label,'window-btn '+(rollingExclude50===mode?'active':''),()=>{rollingExclude50=mode;renderInsights();});
+  button.setAttribute('aria-pressed',String(rollingExclude50===mode));modes.append(button);
+ }
+ rolling.append(modes);
  const controls=el('div','trend-controls');controls.append(el('span','sm muted','Previous questions:'));
- for(const w of [10,25,50,100]){const button=makeButton(String(w),`window-btn ${rollingWindow===w?'active':''}`,()=>{rollingWindow=w;renderInsights();});button.setAttribute('aria-pressed',String(rollingWindow===w));controls.append(button);}
- rolling.append(controls);const result=makeRollingBrierSvg(rows,rollingWindow);rolling.append(result.svg);
- rolling.append(el('p','legend',`Latest rolling mean: ${round(result.last,3)} · ${Math.min(rollingWindow,rows.length)} most recent scored questions. Lower is better. Before ${rollingWindow} questions have been answered, the window uses the available answers.`));node.append(rolling);
- const completedDays=Object.values(state.days).filter(d=>completed(d)).sort((a,b)=>a.date.localeCompare(b.date)).map(d=>({date:d.date,...dayStats(d)})).filter(x=>x.brier!==null).slice(-30);
- const b=el('div','panel chart');b.append(el('h3','','Daily Brier history'));b.append(makeTrendSvg(completedDays));b.append(el('p','legend','Each point summarizes all unflagged answers on a day with at least ten completed questions. Daily sample sizes may differ; look for trends across many days.'));node.append(b);
+ for(const w of [10,25,50,100]){
+  const button=makeButton(String(w),'window-btn '+(rollingWindow===w?'active':''),()=>{rollingWindow=w;renderInsights();});
+  button.setAttribute('aria-pressed',String(rollingWindow===w));controls.append(button);
+ }
+ rolling.append(controls);
+ const rollingRows=rollingExclude50?confident:rows;
+ if(rollingRows.length){
+  const result=makeRollingBrierSvg(rollingRows,rollingWindow);
+  rolling.append(result.svg);
+  rolling.append(el('p','legend','Latest rolling mean: '+round(result.last,3)+' over '+Math.min(rollingWindow,rollingRows.length)+' most recent '+(rollingExclude50?'above-50%':'scored')+' answers from selected subjects. Lower is better.'));
+ }else rolling.append(el('p','muted','No answers above 50% confidence yet in these subjects.'));
+ node.append(rolling);
+ const byDay=new Map();
+ for(const r of rows){
+  if(!completed(state.days[r.date]))continue;
+  if(!byDay.has(r.date))byDay.set(r.date,[]);
+  byDay.get(r.date).push(r);
+ }
+ const dailyRows=[...byDay.entries()].sort((a,b)=>a[0].localeCompare(b[0])).slice(-30).map(([date,rs])=>({date,brier:average(rs),n:rs.length}));
+ const daily=el('div','panel chart');daily.append(el('h3','','Daily Brier history'));
+ if(dailyRows.length)daily.append(makeTrendSvg(dailyRows));
+ else daily.append(el('p','muted','No days meeting the ten-question streak goal yet.'));
+ daily.append(el('p','legend','Full Brier of selected subjects on days when the overall ten-question practice goal was met. Daily counts may differ.'));
+ node.append(daily);
 }
 function download(filename,contents,type){const blob=new Blob([contents],{type});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),3000);}
 function exportJson(){download(`calibration-lab-${dateKey()}.json`,JSON.stringify({exportedAt:new Date().toISOString(),...state},null,2),'application/json');}
