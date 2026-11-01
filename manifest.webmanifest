@@ -1,7 +1,7 @@
 {
   "name": "Calibration Lab",
   "short_name": "Calibration",
-  "description": "Ten daily true/false questions to improve probabilistic calibration",
+  "description": "Answer at least ten daily true/false questions and practice as long as you like",
   "id": "./",
   "start_url": "./",
   "scope": "./",
