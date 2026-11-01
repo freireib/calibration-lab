@@ -1,4 +1,4 @@
-# Calibration Lab — version 0.5
+# Calibration Lab — version 0.6
 
 Ten true/false questions to earn a daily streak, **unlimited extra questions**, confidence judgments, Brier loss, a calibration dashboard, and portable data exports.
 
@@ -64,3 +64,7 @@ The Practice tab has a saved multi-subject selection. New questions use the sele
 The Insights tab has a separate multi-subject filter applied retrospectively to stored answers; by default it includes all subjects, including old anime/video-game questions grouped under Other / entertainment. Existing history and streak progress remain unchanged. All plots and summary statistics respond to the Insights subject filter.
 
 Mean Brier excluding exactly 50% confidence reports conditional score only for answers at greater than 50% confidence. The alongside coverage metric is the fraction of subject-filtered scored answers retained. The full Brier is always shown and remains the primary score. The rolling Brier chart can plot either full or conditional Brier. Historic exports remain version 1 with two optional subject-preference fields; importing older backups is backward compatible.
+
+## v0.6 — reliability fix for Keep practicing
+
+Open Trivia DB limits requests to one per IP every five seconds, and may return response code 1 for an oversized category request or code 5 when throttled. The loader now waits between calls, attempts up to three requests, reduces batch size if there are insufficient category questions, and retries when a response contains only previously seen questions. It falls back to unused locally supplied trivia within the selected subjects. When no new questions can be found, the practice screen explicitly reports the issue rather than silently resetting to Keep practicing. All current records, question progress, streaks, and the existing storage key are retained.
