@@ -1,7 +1,8 @@
-/* Calibration Lab v0.1: zero-dependency, offline-capable true/false calibration. */
+/* Calibration Lab v0.2: unlimited daily practice; ten judgments qualify a streak. */
 'use strict';
 const KEY='calibration-lab-data-v1';
-const N=10;
+const DAILY_GOAL=10;
+const BATCH_SIZE=10;
 const $=(selector)=>document.querySelector(selector);
 const el=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;};
 const round=(v,d=2)=>Number(v).toFixed(d);
@@ -60,7 +61,7 @@ function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random
 function decodeURIComponentSafe(s){try{return decodeURIComponent(s);}catch{return s;}}
 async function loadQuestions(){
  const seen=new Set([...state.seen,...state.questionQueue.map(q=>q.id)]);
- if(state.questionQueue.length>=N)return;
+ if(state.questionQueue.length>=BATCH_SIZE)return;
  try{
   const ctl=new AbortController();const timer=setTimeout(()=>ctl.abort(),9000);
   let r;try{r=await fetch('https://opentdb.com/api.php?amount=30&type=boolean&encode=url3986',{signal:ctl.signal,cache:'no-store'});}finally{clearTimeout(timer);}
@@ -72,51 +73,120 @@ async function loadQuestions(){
    if(!seen.has(q.id)){state.questionQueue.push(q);seen.add(q.id);}
   }
  }catch(e){console.info('Trivia unavailable; use offline questions.',e);apiError=true;}
- if(state.questionQueue.length<N){for(const q of shuffle([...offlineBank])){if(!seen.has(q.id)){state.questionQueue.push(q);seen.add(q.id);}}}
+ if(state.questionQueue.length<BATCH_SIZE){for(const q of shuffle([...offlineBank])){if(!seen.has(q.id)){state.questionQueue.push(q);seen.add(q.id);}}}
  save();
 }
-async function startToday(){if(starting)return;starting=true;const target=$('#practice-content');target.replaceChildren();const box=el('div','panel');box.append(el('p','muted','Preparing today’s questions…'));target.append(box);
- try{await loadQuestions();if(state.questionQueue.length<N){target.replaceChildren();const error=el('div','panel');error.append(el('h2','', 'Not enough new questions yet.'),el('p','muted','Connect to the internet to fetch more unique trivia questions. Your existing history is safe.'));target.append(error);return;}
-  const today=dateKey();state.days[today]={date:today,questions:state.questionQueue.splice(0,N),responses:[],cursor:0,createdAt:new Date().toISOString()};
-  for(const q of state.days[today].questions){state.seen.push(q.id);}if(!save()){delete state.days[today];return;}
+async function startToday(){
+ if(starting)return;
+ if(state.days[dateKey()]){render();return;}
+ starting=true;
+ const target=$('#practice-content');target.replaceChildren();
+ const box=el('div','panel');box.append(el('p','muted','Preparing today’s questions…'));target.append(box);
+ try{
+  await loadQuestions();
+  if(state.questionQueue.length===0){
+   target.replaceChildren();const error=el('div','panel');
+   error.append(el('h2','','No new questions available'),el('p','muted','Connect to the internet and try again. Your previous answers are safe.'));
+   error.append(makeButton('Try again','primary',startToday));target.append(error);return;
+  }
+  const today=dateKey();
+  const batch=state.questionQueue.splice(0,BATCH_SIZE);
+  state.days[today]={date:today,questions:batch,responses:[],cursor:0,createdAt:new Date().toISOString()};
+  for(const q of batch)state.seen.push(q.id);
+  if(!save()){delete state.days[today];state.questionQueue.unshift(...batch);state.seen.splice(-batch.length);return;}
   selected=null;confidence=75;render();
  }finally{starting=false;}
 }
-function completed(day){return day?.responses?.length===N;}
+async function loadMoreToday(){
+ if(starting)return;
+ const day=state.days[dateKey()];
+ if(!day||day.cursor<day.questions.length)return;
+ starting=true;
+ const node=$('#practice-content');const button=node.querySelector('[data-more]');
+ if(button){button.disabled=true;button.textContent='Loading questions…';}
+ try{
+  await loadQuestions();
+  if(state.questionQueue.length===0){
+   render();const box=$('#practice-content .panel');
+   if(box)box.append(el('p','sm muted','No unused questions available right now. Connect to the internet and try again later.'));
+   return;
+  }
+  const batch=state.questionQueue.splice(0,BATCH_SIZE);
+  day.questions.push(...batch);
+  state.seen.push(...batch.map(q=>q.id));
+  if(!save()){
+   day.questions.splice(-batch.length);state.seen.splice(-batch.length);state.questionQueue.unshift(...batch);return;
+  }
+  selected=null;confidence=75;render();
+ }finally{starting=false;}
+}
+function completed(day){return (day?.responses?.length||0)>=DAILY_GOAL;}
 function dayStats(day){const valid=day.responses.filter(r=>!r.flagged);const brier=valid.length?valid.reduce((s,r)=>s+r.brier,0)/valid.length:null;return {valid:valid.length,correct:valid.filter(r=>r.correct).length,brier};}
 function getResponses(){const rows=[];for(const day of Object.values(state.days)){day.responses.forEach((r,i)=>rows.push({...r,date:day.date,question:day.questions[i]?.prompt||'',category:day.questions[i]?.category||'',source:day.questions[i]?.source||'',difficulty:day.questions[i]?.difficulty||'',id:day.questions[i]?.id||''}));}return rows.sort((a,b)=>b.timestamp.localeCompare(a.timestamp));}
 function streak(){let d=new Date();let k=dateKey(d);if(!completed(state.days[k])){d.setDate(d.getDate()-1);k=dateKey(d);}let count=0;while(completed(state.days[k])){count++;d.setDate(d.getDate()-1);k=dateKey(d);}return count;}
 function makeButton(label,cls,onClick){const b=el('button',cls,label);b.type='button';b.addEventListener('click',onClick);return b;}
-function renderPractice(){const node=$('#practice-content');node.replaceChildren();const day=state.days[dateKey()];if(!day){const box=el('div','panel');box.append(el('p','micro','A daily ten-question practice'),el('h2','','Estimate, commit, learn.'),el('p','muted','Pick True or False, then state the chance your answer is correct. Feedback appears only after you submit.'));
- box.append(el('p','sm muted','10 questions · 50–100% confidence · about 3–5 minutes'));
- box.append(makeButton('Begin today’s 10 questions','primary',startToday));
- node.append(box);return;}
- if(day.cursor>=N){const s=dayStats(day);const box=el('div','panel');box.append(el('p','micro','Today complete'),el('h2','', 'Ten judgments recorded.'));
- const stats=el('div','stats');for(const [value,label] of [[`${s.correct}/${s.valid}`,'Correct (unflagged)'],[s.brier===null?'—':round(s.brier,3),'Mean Brier loss'],[s.valid,'Scored answers']]){const card=el('div','stat');card.append(el('div','value mono',value),el('div','caption',label));stats.append(card);}box.append(stats);
- box.append(el('p','sm muted','Brier loss is better when lower. Ten questions are too few to judge calibration; the Insights tab pools many days.'));
- box.append(makeButton('View calibration insights','primary',()=>setView('insights')));node.append(box);return;}
+function renderPractice(){
+ const node=$('#practice-content');node.replaceChildren();const day=state.days[dateKey()];
+ if(!day){
+  const box=el('div','panel');
+  box.append(el('p','micro','Ten answers maintain your streak'),el('h2','','Estimate, commit, learn.'),
+   el('p','muted','Pick True or False, then estimate the chance your answer is correct. Keep practicing as long as you like.'));
+  box.append(el('p','sm muted','10-question daily goal · unlimited extras · 50–100% confidence'));
+  box.append(makeButton('Start today’s practice','primary',startToday));node.append(box);return;
+ }
+ const answered=day.responses.length;
+ if(day.cursor>=day.questions.length){
+  const stats=dayStats(day),met=completed(day),box=el('div','panel');
+  box.append(el('p','micro',met?'Daily streak goal met':'Daily practice paused'),
+   el('h2','',met?`${answered} judgments recorded today.`:`${answered} of ${DAILY_GOAL} completed.`));
+  const progress=el('div','progress');const fill=el('div');fill.style.width=`${100*Math.min(answered,DAILY_GOAL)/DAILY_GOAL}%`;progress.append(fill);box.append(progress);
+  const cards=el('div','stats');
+  for(const [value,label] of [[`${answered}/${DAILY_GOAL}`,answered>=DAILY_GOAL?'Daily goal reached':'Toward daily goal'],
+   [`${stats.correct}/${stats.valid}`,'Correct (unflagged)'],[stats.brier===null?'—':round(stats.brier,3),'Mean Brier loss']]){
+   const card=el('div','stat');card.append(el('div','value mono',value),el('div','caption',label));cards.append(card);
+  }
+  box.append(cards);
+  box.append(el('p','sm muted',met?'Your streak is secured for today. Every extra answer still counts toward your calibration statistics.':'Answer at least ten questions today to earn your streak.'));
+  const more=makeButton(met?'Keep practicing — more questions':'Continue toward 10 questions','primary',loadMoreToday);
+  more.dataset.more='true';box.append(more);
+  box.append(makeButton('View calibration insights','secondary-btn',()=>setView('insights')));
+  node.append(box);return;
+ }
  const idx=day.cursor,q=day.questions[idx],response=day.responses[idx];
- const card=el('div','panel');const top=el('div','row between');top.append(el('span','micro',`QUESTION ${idx+1} OF ${N}`),el('span','chip',q.category||'Mixed'));card.append(top);
- const progress=el('div','progress');const fill=el('div');fill.style.width=`${(idx/N)*100}%`;progress.append(fill);card.append(progress);
+ const card=el('div','panel'),top=el('div','row between');
+ top.append(el('span','micro',`QUESTION ${idx+1} TODAY`),el('span','chip',q.category||'Mixed'));card.append(top);
+ const progress=el('div','progress');const fill=el('div');fill.style.width=`${100*Math.min(answered,DAILY_GOAL)/DAILY_GOAL}%`;progress.append(fill);card.append(progress);
+ card.append(el('p','sm muted',answered>=DAILY_GOAL?`Daily goal met · ${answered} answered today`:`${answered} of ${DAILY_GOAL} completed toward your streak`));
  card.append(el('div','question',q.prompt));
- if(response){const fb=el('div',`feedback ${response.correct?'':'wrong'}`);fb.append(el('strong','',response.correct?'Correct.':'Not this time.'));
- fb.append(el('p','sm',`Answer: ${q.answer?'True':'False'}. You chose ${response.chosen?'True':'False'} with ${response.confidence}% confidence.`));
- fb.append(el('p','sm',`Brier loss: ${round(response.brier,3)} (lower is better).`));card.append(fb);
- const flagLine=el('div','row between');flagLine.style.marginTop='16px';flagLine.append(el('span','sm muted',response.flagged?'Excluded from calibration statistics':'Question ambiguous or incorrect?'));
- flagLine.append(makeButton(response.flagged?'Undo flag':'Flag question','secondary-btn',()=>{response.flagged=!response.flagged;save();render();}));card.append(flagLine);
- card.append(makeButton(idx===N-1?'Finish today’s session':'Next question','primary',()=>{day.cursor=idx+1;selected=null;confidence=75;save();render();}));
+ if(response){
+  const fb=el('div',`feedback ${response.correct?'':'wrong'}`);fb.append(el('strong','',response.correct?'Correct.':'Not this time.'));
+  fb.append(el('p','sm',`Answer: ${q.answer?'True':'False'}. You chose ${response.chosen?'True':'False'} with ${response.confidence}% confidence.`));
+  fb.append(el('p','sm',`Brier loss: ${round(response.brier,3)} (lower is better).`));card.append(fb);
+  const flagLine=el('div','row between');flagLine.style.marginTop='16px';
+  flagLine.append(el('span','sm muted',response.flagged?'Excluded from calibration statistics':'Question ambiguous or incorrect?'));
+  flagLine.append(makeButton(response.flagged?'Undo flag':'Flag question','secondary-btn',()=>{response.flagged=!response.flagged;save();render();}));card.append(flagLine);
+  const last=idx===day.questions.length-1;
+  card.append(makeButton(last?(completed(day)?'See today’s progress':'Continue today’s practice'):'Next question','primary',()=>{
+   day.cursor=idx+1;selected=null;confidence=75;save();render();
+  }));
  }else{
- const choices=el('div','choice-row');for(const [val,label] of [[true,'True'],[false,'False']]){const b=makeButton(label,`choice ${selected===val?'selected':''}`,()=>{selected=val;renderPractice();});b.setAttribute('aria-pressed',String(selected===val));choices.append(b);}card.append(choices);
- const head=el('div','confidence-head');head.append(el('span','','How confident are you?'),el('span','confidence-number mono',`${confidence}%`));card.append(head);
- const slider=el('input');slider.type='range';slider.min='50';slider.max='100';slider.step='5';slider.value=String(confidence);slider.setAttribute('aria-label','Confidence your selected answer is correct');slider.addEventListener('input',()=>{confidence=Number(slider.value);head.lastChild.textContent=`${confidence}%`;});card.append(slider);
- const range=el('div','range-labels');range.append(el('span','','50% · coin flip'),el('span','','100% · certain'));card.append(range);
- card.append(el('p','sm muted','Give the probability your chosen answer is correct, before revealing the answer.'));
- const submit=makeButton('Lock in answer','primary',()=>{
- if(selected===null)return;const conf=confidence/100;const correct=selected===q.answer;
- const pTrue=selected?conf:(1-conf);
- const record={kind:'boolean',chosen:selected,confidence,probTrue:pTrue,correct,flagged:false,brier:(pTrue-Number(q.answer))**2,timestamp:new Date().toISOString()};
- day.responses.push(record);if(!save()){day.responses.pop();return;}render();
- });submit.disabled=selected===null;card.append(submit);
+  const choices=el('div','choice-row');
+  for(const [val,label] of [[true,'True'],[false,'False']]){
+   const b=makeButton(label,`choice ${selected===val?'selected':''}`,()=>{selected=val;renderPractice();});
+   b.setAttribute('aria-pressed',String(selected===val));choices.append(b);
+  }card.append(choices);
+  const head=el('div','confidence-head');head.append(el('span','','How confident are you?'),el('span','confidence-number mono',`${confidence}%`));card.append(head);
+  const slider=el('input');slider.type='range';slider.min='50';slider.max='100';slider.step='5';slider.value=String(confidence);
+  slider.setAttribute('aria-label','Confidence your selected answer is correct');
+  slider.addEventListener('input',()=>{confidence=Number(slider.value);head.lastChild.textContent=`${confidence}%`;});card.append(slider);
+  const range=el('div','range-labels');range.append(el('span','','50% · coin flip'),el('span','','100% · certain'));card.append(range);
+  card.append(el('p','sm muted','Give the probability your chosen answer is correct, before revealing the answer.'));
+  const submit=makeButton('Lock in answer','primary',()=>{
+   if(selected===null)return;const conf=confidence/100;const correct=selected===q.answer;
+   const pTrue=selected?conf:(1-conf);
+   const record={kind:'boolean',chosen:selected,confidence,probTrue:pTrue,correct,flagged:false,brier:(pTrue-Number(q.answer))**2,timestamp:new Date().toISOString()};
+   day.responses.push(record);if(!save()){day.responses.pop();return;}render();
+  });submit.disabled=selected===null;card.append(submit);
  }
  node.append(card);
 }
@@ -144,8 +214,8 @@ function makeTrendSvg(days){const s=svg('svg',{viewBox:'0 0 390 205',role:'img',
 function renderInsights(){const node=$('#insights-content');node.replaceChildren();const rows=getResponses().filter(r=>!r.flagged);if(!rows.length){node.append(el('div','empty','No scored answers yet. Complete your first set of questions to see calibration data.'));return;}
  const brier=rows.reduce((s,r)=>s+r.brier,0)/rows.length;const correct=rows.filter(r=>r.correct).length;const panel=el('div','panel');const grid=el('div','stats');for(const [val,label] of [[rows.length,'Scored judgments'],[`${round(100*correct/rows.length,1)}%`,'Accuracy'],[round(brier,3),'Mean Brier loss']]){const c=el('div','stat');c.append(el('div','value mono',val),el('div','caption',label));grid.append(c);}panel.append(grid,el('p','message',rows.length<50?'Early data: calibration estimates will be noisy until you accumulate at least several dozen questions.':'Compare calibration bins cautiously; bin-specific sample sizes can still be small.'));node.append(panel);
  const a=el('div','panel chart');a.append(el('h3','','Calibration by confidence'));a.append(makeCalibrationSvg(rows));a.append(el('p','legend','Dashed diagonal = perfect calibration. Dots = observed accuracy within 10-point confidence bins; dot size reflects sample count.'));node.append(a);
- const completedDays=Object.values(state.days).filter(d=>d.responses?.length===N).sort((a,b)=>a.date.localeCompare(b.date)).map(d=>({date:d.date,...dayStats(d)})).filter(x=>x.brier!==null).slice(-30);
- const b=el('div','panel chart');b.append(el('h3','','Daily Brier history'));b.append(makeTrendSvg(completedDays));b.append(el('p','legend','Daily scores vary widely with ten questions. Look for trends over many sessions, not one day.'));node.append(b);
+ const completedDays=Object.values(state.days).filter(d=>completed(d)).sort((a,b)=>a.date.localeCompare(b.date)).map(d=>({date:d.date,...dayStats(d)})).filter(x=>x.brier!==null).slice(-30);
+ const b=el('div','panel chart');b.append(el('h3','','Daily Brier history'));b.append(makeTrendSvg(completedDays));b.append(el('p','legend','Each point summarizes all unflagged answers on a day with at least ten completed questions. Daily sample sizes may differ; look for trends across many days.'));node.append(b);
 }
 function download(filename,contents,type){const blob=new Blob([contents],{type});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),3000);}
 function exportJson(){download(`calibration-lab-${dateKey()}.json`,JSON.stringify({exportedAt:new Date().toISOString(),...state},null,2),'application/json');}
@@ -166,7 +236,7 @@ function renderData(){const node=$('#data-content');node.replaceChildren();const
  }node.append(hist);const alertBox=el('div','alert','Local browser storage is not a permanent backup. Export a JSON copy before clearing Safari website data, deleting the Home Screen app, or switching devices.');node.append(alertBox);
 }
 function setView(view){for(const b of document.querySelectorAll('.tab')){const on=b.dataset.view===view;b.classList.toggle('active',on);if(on)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');}for(const s of document.querySelectorAll('.view'))s.classList.toggle('active',s.id===view);render();}
-function render(){const today=state.days[dateKey()];$('#today-status').textContent=completed(today)?'Done today':today?'In progress':'Daily practice';$('#streak').textContent=`${streak()}-day streak`;renderPractice();renderInsights();renderData();}
+function render(){const today=state.days[dateKey()];$('#today-status').textContent=completed(today)?`${today.responses.length} answered · goal met`:today?`${today.responses.length}/${DAILY_GOAL} toward streak`:'Daily practice';$('#streak').textContent=`${streak()}-day streak`;renderPractice();renderInsights();renderData();}
 for(const b of document.querySelectorAll('.tab'))b.addEventListener('click',()=>setView(b.dataset.view));
 if('serviceWorker'in navigator&&location.protocol.startsWith('http'))window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(e=>console.info('Offline install unavailable',e)));
 render();
