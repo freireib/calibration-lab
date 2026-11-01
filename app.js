@@ -1,4 +1,4 @@
-/* Calibration Lab v0.2: unlimited daily practice; ten judgments qualify a streak. */
+/* Calibration Lab v0.3: calibration credible intervals and rolling Brier trends. */
 'use strict';
 const KEY='calibration-lab-data-v1';
 const DAILY_GOAL=10;
@@ -10,7 +10,7 @@ const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 function dateKey(date=new Date()){return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;}
 function freshState(){return {version:1,days:{},questionQueue:[],seen:[]};}
 function load(){try{const v=JSON.parse(localStorage.getItem(KEY));if(v&&v.version===1&&v.days&&typeof v.days==='object'&&Array.isArray(v.seen)&&Array.isArray(v.questionQueue))return v;}catch(e){console.warn('Could not load local history',e);}return freshState();}
-let state=load(),selected=null,confidence=75,starting=false,apiError=false;
+let state=load(),selected=null,confidence=75,starting=false,apiError=false,rollingWindow=25;
 function save(){try{localStorage.setItem(KEY,JSON.stringify(state));return true;}catch(e){alert('Unable to save local data. Storage may be full or unavailable. Export your history now.');return false;}}
 function hash(s){let h=2166136261;for(let i=0;i<s.length;i++){h=Math.imul(h^s.charCodeAt(i),16777619);}return (h>>>0).toString(36);}
 function qObj(prompt,answer,category='Mixed',source='Offline practice',difficulty=''){return {id:hash(prompt.toLowerCase().replace(/\s+/g,' ').trim()),type:'boolean',prompt,answer,category,source,difficulty};}
@@ -191,17 +191,87 @@ function renderPractice(){
  node.append(card);
 }
 function svg(tag,attrs={},text){const n=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [k,v] of Object.entries(attrs))n.setAttribute(k,String(v));if(text!==undefined)n.textContent=text;return n;}
-function makeCalibrationSvg(rows){const s=svg('svg',{viewBox:'0 0 390 280',role:'img','aria-label':'Reliability plot: observed accuracy versus stated confidence'});
+// Jeffreys-prior Beta(k + 1/2, n - k + 1/2) credible intervals.
+// The posterior assumes exchangeable binary outcomes within each confidence bin.
+function logGamma(z){
+ const cof=[0.99999999999980993,676.5203681218851,-1259.1392167224028,771.32342877765313,-176.6150291621406,12.507343278686905,-0.13857109526572012,9.984369578019572e-6,1.5056327351493116e-7];
+ if(z<0.5)return Math.log(Math.PI)-Math.log(Math.sin(Math.PI*z))-logGamma(1-z);
+ z-=1;let x=cof[0];for(let i=1;i<cof.length;i++)x+=cof[i]/(z+i);
+ const t=z+7.5;return 0.5*Math.log(2*Math.PI)+(z+0.5)*Math.log(t)-t+Math.log(x);
+}
+function betaFraction(a,b,x){
+ const tiny=1e-300,epsilon=3e-13;let c=1,d=1-(a+b)*x/(a+1);
+ if(Math.abs(d)<tiny)d=tiny;d=1/d;let h=d;
+ for(let m=1;m<=200;m++){
+  const m2=2*m;let aa=m*(b-m)*x/((a+m2-1)*(a+m2));
+  d=1+aa*d;if(Math.abs(d)<tiny)d=tiny;c=1+aa/c;if(Math.abs(c)<tiny)c=tiny;
+  d=1/d;h*=d*c;
+  aa=-(a+m)*(a+b+m)*x/((a+m2)*(a+m2+1));
+  d=1+aa*d;if(Math.abs(d)<tiny)d=tiny;c=1+aa/c;if(Math.abs(c)<tiny)c=tiny;
+  d=1/d;const delta=d*c;h*=delta;if(Math.abs(delta-1)<epsilon)break;
+ }
+ return h;
+}
+function betaCDF(x,a,b){
+ if(x<=0)return 0;if(x>=1)return 1;
+ const logFront=logGamma(a+b)-logGamma(a)-logGamma(b)+a*Math.log(x)+b*Math.log1p(-x);
+ const front=Math.exp(logFront);
+ return x<(a+1)/(a+b+2)?clamp(front*betaFraction(a,b,x)/a,0,1):clamp(1-front*betaFraction(b,a,1-x)/b,0,1);
+}
+function betaQuantile(prob,a,b){
+ let lo=0,hi=1;
+ for(let i=0;i<48;i++){const mid=(lo+hi)/2;if(betaCDF(mid,a,b)<prob)lo=mid;else hi=mid;}
+ return (lo+hi)/2;
+}
+function calibrationBins(rows){
+ const bins=[[],[],[],[],[]];
+ rows.forEach(r=>{if(r.confidence>=50&&r.confidence<=100)bins[Math.min(4,Math.floor((r.confidence-50)/10))].push(r);});
+ return bins.map((b,i)=>{
+  if(!b.length)return null;
+  const n=b.length,k=b.filter(r=>r.correct).length,alpha=k+0.5,beta=n-k+0.5;
+  return {label:i===4?'90–100%':`${50+10*i}–${59+10*i}%`,n,k,meanConfidence:b.reduce((sum,r)=>sum+r.confidence/100,0)/n,accuracy:k/n,low:betaQuantile(.025,alpha,beta),high:betaQuantile(.975,alpha,beta)};
+ }).filter(Boolean);
+}
+function makeCalibrationSvg(bins){
+ const s=svg('svg',{viewBox:'0 0 390 280',role:'img','aria-label':'Calibration: observed accuracy and 95% Bayesian credible intervals for each confidence group'});
  const L=44,R=364,B=232,T=18;const xp=p=>L+(p-0.5)/0.5*(R-L),yp=p=>B-p*(B-T);
  for(let k=0;k<=10;k+=2){const p=k/10;s.append(svg('line',{x1:L,y1:yp(p),x2:R,y2:yp(p),stroke:'#e4eaea','stroke-width':1}),svg('text',{x:L-8,y:yp(p)+4,'text-anchor':'end',class:'chart-tick'},`${k*10}%`));}
- for(const p of [0.5,0.6,0.7,0.8,0.9,1]){s.append(svg('text',{x:xp(p),y:251,'text-anchor':'middle',class:'chart-tick'},`${round(p*100,0)}%`));}
+ for(const p of [0.5,0.6,0.7,0.8,0.9,1])s.append(svg('text',{x:xp(p),y:251,'text-anchor':'middle',class:'chart-tick'},`${round(p*100,0)}%`));
  s.append(svg('line',{x1:xp(.5),y1:yp(.5),x2:xp(1),y2:yp(1),stroke:'#b0c2c0','stroke-width':2,'stroke-dasharray':'6 5'}));
- const bins=[[],[],[],[],[]];rows.forEach(r=>bins[Math.min(4,Math.floor((r.confidence-50)/10))].push(r));
- bins.forEach((b,i)=>{if(!b.length)return;const x=b.reduce((s,r)=>s+r.confidence/100,0)/b.length;const y=b.filter(r=>r.correct).length/b.length;
- const rad=Math.min(12,4+Math.sqrt(b.length)*1.2);s.append(svg('circle',{cx:xp(x),cy:yp(y),r:rad,fill:'#147966',opacity:'.85'}));s.append(svg('text',{x:xp(x),y:yp(y)-rad-5,'text-anchor':'middle',class:'chart-tick'},`n=${b.length}`));
- });s.append(svg('text',{x:(L+R)/2,y:272,'text-anchor':'middle',class:'chart-label'},'Your stated confidence'));
- s.append(svg('text',{x:14,y:(B+T)/2,transform:`rotate(-90 14 ${(B+T)/2})`,'text-anchor':'middle',class:'chart-label'},'Actual accuracy'));
- return s;}
+ bins.forEach(b=>{
+  const x=xp(b.meanConfidence),y=yp(b.accuracy),top=yp(b.high),bottom=yp(b.low);
+  const group=svg('g');group.append(svg('line',{x1:x,y1:top,x2:x,y2:bottom,stroke:'#a56513','stroke-width':2.5}),
+    svg('line',{x1:x-6,y1:top,x2:x+6,y2:top,stroke:'#a56513','stroke-width':2.5}),
+    svg('line',{x1:x-6,y1:bottom,x2:x+6,y2:bottom,stroke:'#a56513','stroke-width':2.5}));
+  const dot=svg('circle',{cx:x,cy:y,r:Math.min(10,4+Math.sqrt(b.n)*.6),fill:'#147966',stroke:'#fff','stroke-width':1.7});
+  dot.append(svg('title',{},`${b.label}: ${b.k}/${b.n} correct (${round(100*b.accuracy,1)}%); 95% credible interval ${round(100*b.low,1)}–${round(100*b.high,1)}%`));group.append(dot);
+  group.append(svg('text',{x,y:Math.max(10,top-7),'text-anchor':'middle',class:'chart-tick'},`n=${b.n}`));s.append(group);
+ });
+ s.append(svg('text',{x:(L+R)/2,y:272,'text-anchor':'middle',class:'chart-label'},'Your stated confidence'));
+ s.append(svg('text',{x:14,y:(B+T)/2,transform:`rotate(-90 14 ${(B+T)/2})`,'text-anchor':'middle',class:'chart-label'},'Observed accuracy'));
+ return s;
+}
+function makeCalibrationTable(bins){
+ const table=el('table','calibration-table'),thead=el('thead'),head=el('tr');
+ for(const label of ['Confidence','Correct','Accuracy','95% interval'])head.append(el('th','',label));
+ thead.append(head);table.append(thead);const body=el('tbody');
+ for(const b of bins){const tr=el('tr');for(const str of [b.label,`${b.k}/${b.n}`,`${round(100*b.accuracy,0)}%`,`${round(100*b.low,0)}–${round(100*b.high,0)}%`])tr.append(el('td','',str));body.append(tr);}
+ table.append(body);return table;
+}
+function makeRollingBrierSvg(rows,windowSize){
+ const s=svg('svg',{viewBox:'0 0 390 205',role:'img', 'aria-label':`Mean Brier loss over the previous ${windowSize} scored questions, ordered by when answered`});
+ const L=48,R=366,T=18,B=163,yp=v=>B-clamp(v,0,1)*(B-T);
+ for(const v of [0,.25,.5,.75,1])s.append(svg('line',{x1:L,x2:R,y1:yp(v),y2:yp(v),stroke:'#e5ebeb'}),svg('text',{x:L-6,y:yp(v)+3,'text-anchor':'end',class:'chart-tick'},round(v,2)));
+ // One running mean for each successive scored judgment (excluded flags do not enter).
+ const reverse=[...rows].sort((a,b)=>a.timestamp.localeCompare(b.timestamp));let sum=0;const series=[];
+ reverse.forEach((r,i)=>{sum+=r.brier;if(i>=windowSize)sum-=reverse[i-windowSize].brier;series.push({idx:i+1,val:sum/Math.min(windowSize,i+1)});});
+ const x=i=>series.length===1?(L+R)/2:L+i/(series.length-1)*(R-L);
+ if(series.length>1)s.append(svg('polyline',{points:series.map((d,i)=>`${x(i)},${yp(d.val)}`).join(' '),fill:'none',stroke:'#147966','stroke-width':2.5,'stroke-linejoin':'round'}));
+ const last=series[series.length-1];s.append(svg('circle',{cx:x(series.length-1),cy:yp(last.val),r:4.5,fill:'#147966'}));
+ s.append(svg('text',{x:L,y:185,class:'chart-tick'},'1'),svg('text',{x:R,y:185,'text-anchor':'end',class:'chart-tick'},`${last.idx}`));
+ s.append(svg('text',{x:(L+R)/2,y:200,'text-anchor':'middle',class:'chart-label'},'Scored question number (oldest to newest)'));
+ return {svg:s,last:last.val};
+}
 function makeTrendSvg(days){const s=svg('svg',{viewBox:'0 0 390 205',role:'img','aria-label':'Mean Brier loss per completed day'});
  const L=48,R=366,T=18,B=163,yp=v=>B-clamp(v,0,1)*(B-T);
  for(const v of [0,.25,.5,.75,1]){s.append(svg('line',{x1:L,x2:R,y1:yp(v),y2:yp(v),stroke:'#e5ebeb'}),svg('text',{x:L-6,y:yp(v)+3,'text-anchor':'end',class:'chart-tick'},round(v,2)));}
@@ -213,7 +283,14 @@ function makeTrendSvg(days){const s=svg('svg',{viewBox:'0 0 390 205',role:'img',
 }
 function renderInsights(){const node=$('#insights-content');node.replaceChildren();const rows=getResponses().filter(r=>!r.flagged);if(!rows.length){node.append(el('div','empty','No scored answers yet. Complete your first set of questions to see calibration data.'));return;}
  const brier=rows.reduce((s,r)=>s+r.brier,0)/rows.length;const correct=rows.filter(r=>r.correct).length;const panel=el('div','panel');const grid=el('div','stats');for(const [val,label] of [[rows.length,'Scored judgments'],[`${round(100*correct/rows.length,1)}%`,'Accuracy'],[round(brier,3),'Mean Brier loss']]){const c=el('div','stat');c.append(el('div','value mono',val),el('div','caption',label));grid.append(c);}panel.append(grid,el('p','message',rows.length<50?'Early data: calibration estimates will be noisy until you accumulate at least several dozen questions.':'Compare calibration bins cautiously; bin-specific sample sizes can still be small.'));node.append(panel);
- const a=el('div','panel chart');a.append(el('h3','','Calibration by confidence'));a.append(makeCalibrationSvg(rows));a.append(el('p','legend','Dashed diagonal = perfect calibration. Dots = observed accuracy within 10-point confidence bins; dot size reflects sample count.'));node.append(a);
+ const bins=calibrationBins(rows);
+ const a=el('div','panel chart');a.append(el('h3','','Calibration by confidence'));a.append(makeCalibrationSvg(bins),makeCalibrationTable(bins));
+ a.append(el('p','legend','Green dots show observed correctness; amber bars are equal-tailed 95% Bayesian credible intervals using Jeffreys’ Beta(½,½) prior. Dashed diagonal = perfect calibration. Counts are shown for each group. Intervals assume exchangeable questions within each bin; they describe uncertainty in the group accuracy, not the accuracy of any individual answer.'));node.append(a);
+ const rolling=el('div','panel chart');rolling.append(el('h3','','Rolling Brier score'));
+ const controls=el('div','trend-controls');controls.append(el('span','sm muted','Previous questions:'));
+ for(const w of [10,25,50,100]){const button=makeButton(String(w),`window-btn ${rollingWindow===w?'active':''}`,()=>{rollingWindow=w;renderInsights();});button.setAttribute('aria-pressed',String(rollingWindow===w));controls.append(button);}
+ rolling.append(controls);const result=makeRollingBrierSvg(rows,rollingWindow);rolling.append(result.svg);
+ rolling.append(el('p','legend',`Latest rolling mean: ${round(result.last,3)} · ${Math.min(rollingWindow,rows.length)} most recent scored questions. Lower is better. Before ${rollingWindow} questions have been answered, the window uses the available answers.`));node.append(rolling);
  const completedDays=Object.values(state.days).filter(d=>completed(d)).sort((a,b)=>a.date.localeCompare(b.date)).map(d=>({date:d.date,...dayStats(d)})).filter(x=>x.brier!==null).slice(-30);
  const b=el('div','panel chart');b.append(el('h3','','Daily Brier history'));b.append(makeTrendSvg(completedDays));b.append(el('p','legend','Each point summarizes all unflagged answers on a day with at least ten completed questions. Daily sample sizes may differ; look for trends across many days.'));node.append(b);
 }
