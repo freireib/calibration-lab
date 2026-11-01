@@ -198,24 +198,46 @@ async function loadQuestions(onProgress=()=>{}){
  return {count,added:count-original,attempts,issue:issue||(count===0?'No unused questions found in the selected subjects.':null)};
 }
 
+function supplyMessage(result){
+ if(result.count===0)return {kind:'error',message:result.issue||'No unused questions were found in these subjects.'};
+ if(result.count<BATCH_SIZE)return {kind:'warning',message:'Only '+result.count+' unused question'+(result.count===1?' was':'s were')+' retrieved this time. You may need to enable more subjects to continue. '+(result.issue||'')};
+ return null;
+}
+function broadenPracticeAndRetry(){
+ state.practiceSubjects=[...DEFAULT_PRACTICE];
+ state.questionQueue=state.questionQueue.filter(q=>state.practiceSubjects.includes(subjectOf(q)));
+ save();supplyNotice=null;
+ practiceChooserOpen=false;
+ if(state.days[dateKey()])loadMoreToday();else startToday();
+}
+function makeSupplyAlert(notice){
+ const panel=el('div','alert supply-warning');
+ panel.setAttribute('role',notice.kind==='error'?'alert':'status');
+ panel.append(el('strong','',notice.kind==='error'?'No new questions loaded':'Limited question supply'));
+ panel.append(el('p','',notice.message));
+ const options=el('div','button-row');
+ options.append(makeButton('Broaden subjects and retry','secondary-btn',broadenPracticeAndRetry));
+ panel.append(options);return panel;
+}
 async function startToday(){
  if(starting)return;
  if(state.days[dateKey()]){render();return;}
  starting=true;
- const target=$('#practice-content');target.replaceChildren();
- const box=el('div','panel');box.append(el('p','muted','Preparing today’s questions…'));target.append(box);
+ const node=$('#practice-content');
+ node.replaceChildren();
+ const panel=el('div','panel');
+ panel.append(el('p','muted','Preparing today’s questions…'));
+ node.append(panel);
  try{
-  const result=await loadQuestions(message=>{const p=target.querySelector('.muted');if(p)p.textContent=message;});
-  if(state.questionQueue.length===0){
-   target.replaceChildren();target.append(makeSubjectPicker('practice'));const error=el('div','panel');
-   error.append(el('h2','','No new questions available'),el('p','muted',result.issue||'No unused questions found in the selected subjects.'),el('p','sm muted','Try again shortly or select additional subjects. Your previous answers and streak are safe.'));
-   error.append(makeButton('Try again','primary',startToday));target.append(error);return;
-  }
-  const today=dateKey();
-  const batch=state.questionQueue.splice(0,BATCH_SIZE);
+  const result=await loadQuestions(message=>{const p=node.querySelector('.muted');if(p)p.textContent=message;});
+  supplyNotice=supplyMessage(result);
+  if(result.count===0){render();return;}
+  const today=dateKey(),batch=state.questionQueue.splice(0,BATCH_SIZE);
   state.days[today]={date:today,questions:batch,responses:[],cursor:0,createdAt:new Date().toISOString()};
-  for(const q of batch)state.seen.push(q.id);
-  if(!save()){delete state.days[today];state.questionQueue.unshift(...batch);state.seen.splice(-batch.length);return;}
+  state.seen.push(...batch.map(q=>q.id));
+  if(!save()){
+   delete state.days[today];state.questionQueue.unshift(...batch);state.seen.splice(-batch.length);return;
+  }
   selected=null;confidence=75;render();
  }finally{starting=false;}
 }
@@ -224,15 +246,12 @@ async function loadMoreToday(){
  const day=state.days[dateKey()];
  if(!day||day.cursor<day.questions.length)return;
  starting=true;
- const node=$('#practice-content');const button=node.querySelector('[data-more]');
+ const node=$('#practice-content'),button=node.querySelector('[data-more]');
  if(button){button.disabled=true;button.textContent='Loading questions…';}
  try{
   const result=await loadQuestions(message=>{if(button)button.textContent=message;});
-  if(state.questionQueue.length===0){
-   render();const box=$('#practice-content .panel');
-   if(box)box.append(el('p','sm muted',(result.issue||'No unused questions available in the selected subjects.')+' Try again shortly or select more subjects. Your answers and streak have been preserved.'));
-   return;
-  }
+  supplyNotice=supplyMessage(result);
+  if(result.count===0){render();return;}
   const batch=state.questionQueue.splice(0,BATCH_SIZE);
   day.questions.push(...batch);
   state.seen.push(...batch.map(q=>q.id));
@@ -242,6 +261,7 @@ async function loadMoreToday(){
   selected=null;confidence=75;render();
  }finally{starting=false;}
 }
+
 function completed(day){return (day?.responses?.length||0)>=DAILY_GOAL;}
 function dayStats(day){const valid=day.responses.filter(r=>!r.flagged);const brier=valid.length?valid.reduce((s,r)=>s+r.brier,0)/valid.length:null;return {valid:valid.length,correct:valid.filter(r=>r.correct).length,brier};}
 function getResponses(){const rows=[];for(const day of Object.values(state.days)){day.responses.forEach((r,i)=>{const q=day.questions[i];rows.push({...r,date:day.date,question:q?.prompt||'',category:q?.category||'',subject:subjectOf(q),source:q?.source||'',difficulty:q?.difficulty||'',id:q?.id||''});});}return rows.sort((a,b)=>b.timestamp.localeCompare(a.timestamp));}
@@ -265,7 +285,7 @@ function makeSubjectPicker(mode){
    if(isPractice){
     state.practiceSubjects=normalizeSubjects(next,DEFAULT_PRACTICE);
     state.questionQueue=state.questionQueue.filter(q=>state.practiceSubjects.includes(subjectOf(q)));
-    practiceChooserOpen=true;
+    practiceChooserOpen=true;supplyNotice=null;
    }else{
     state.insightSubjects=normalizeSubjects(next,ALL_SUBJECTS);
     insightChooserOpen=true;
@@ -279,13 +299,13 @@ function makeSubjectPicker(mode){
  return d;
 }
 function renderPractice(){
- const node=$('#practice-content');node.replaceChildren();node.append(makeSubjectPicker('practice'));const day=state.days[dateKey()];
+ const node=$('#practice-content');node.replaceChildren();node.append(makeSubjectPicker('practice'));if(state.practiceSubjects.length<=2)node.append(el('div','subject-caution','Narrow selection: only '+state.practiceSubjects.length+' subject'+(state.practiceSubjects.length===1?' is':'s are')+' enabled. The true/false question supply may run low.'));if(supplyNotice)node.append(makeSupplyAlert(supplyNotice));const day=state.days[dateKey()];
  if(!day){
   const box=el('div','panel');
   box.append(el('p','micro','Ten answers maintain your streak'),el('h2','','Estimate, commit, learn.'),
    el('p','muted','Pick True or False, then estimate the chance your answer is correct. Keep practicing as long as you like.'));
   box.append(el('p','sm muted','10-question daily goal · unlimited extras · 50–100% confidence'));
-  box.append(makeButton('Start today’s practice','primary',startToday));node.append(box);return;
+  box.append(makeButton(supplyNotice?.kind==='error'?'Retry loading questions':'Start today’s practice','primary',startToday));node.append(box);return;
  }
  const answered=day.responses.length;
  if(day.cursor>=day.questions.length){
@@ -300,7 +320,7 @@ function renderPractice(){
   }
   box.append(cards);
   box.append(el('p','sm muted',met?'Your streak is secured for today. Every extra answer still counts toward your calibration statistics.':'Answer at least ten questions today to earn your streak.'));
-  const more=makeButton(met?'Keep practicing — more questions':'Continue toward 10 questions','primary',loadMoreToday);
+  const more=makeButton(supplyNotice?.kind==='error'?'Retry loading questions':met?'Keep practicing — more questions':'Continue toward 10 questions','primary',loadMoreToday);
   more.dataset.more='true';box.append(more);
   box.append(makeButton('View calibration insights','secondary-btn',()=>setView('insights')));
   node.append(box);return;
