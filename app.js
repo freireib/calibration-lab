@@ -1,5 +1,6 @@
-/* Calibration Lab v0.7: token-backed question supply, visible limits, and version diagnostics. */
+/* Calibration Lab v0.8: visible runtime version and explicit update action. */
 'use strict';
+const APP_VERSION='0.8';
 const KEY='calibration-lab-data-v1';
 const DAILY_GOAL=10;
 const BATCH_SIZE=10;
@@ -569,5 +570,23 @@ function renderData(){const node=$('#data-content');node.replaceChildren();const
 function setView(view){for(const b of document.querySelectorAll('.tab')){const on=b.dataset.view===view;b.classList.toggle('active',on);if(on)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');}for(const s of document.querySelectorAll('.view'))s.classList.toggle('active',s.id===view);render();}
 function render(){const today=state.days[dateKey()];$('#today-status').textContent=completed(today)?`${today.responses.length} answered · goal met`:today?`${today.responses.length}/${DAILY_GOAL} toward streak`:'Daily practice';$('#streak').textContent=`${streak()}-day streak`;renderPractice();renderInsights();renderData();}
 for(const b of document.querySelectorAll('.tab'))b.addEventListener('click',()=>setView(b.dataset.view));
-if('serviceWorker'in navigator&&location.protocol.startsWith('http'))window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(e=>console.info('Offline install unavailable',e)));
+// The HTML and JS versions are displayed separately to expose stale cached assets.
+const runtimeVersion=$('#runtime-version');
+if(runtimeVersion)runtimeVersion.textContent='v'+APP_VERSION;
+const updateLink=$('#check-update');
+if(updateLink)updateLink.addEventListener('click',async event=>{
+ event.preventDefault();
+ updateLink.textContent='Checking…';
+ try{
+  if('serviceWorker' in navigator){
+   const registration=await navigator.serviceWorker.getRegistration('./');
+   if(registration)await Promise.race([registration.update(),new Promise(resolve=>setTimeout(resolve,2500))]);
+  }
+ }catch(err){console.info('Update check unavailable',err);}
+ const url=new URL('./',location.href);url.searchParams.set('refresh',String(Date.now()));
+ location.assign(url.href);
+});
+if('serviceWorker'in navigator&&location.protocol.startsWith('http')){
+ window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'}).then(reg=>reg.update()).catch(e=>console.info('Offline install unavailable',e)));
+}
 render();
