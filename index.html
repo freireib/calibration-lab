@@ -11,14 +11,14 @@
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon-192.png" type="image/png">
   <link rel="apple-touch-icon" href="./icon-192.png">
-  <link rel="stylesheet" href="./style.css?v=7">
+  <link rel="stylesheet" href="./style.css?v=8">
   <title>Calibration Lab</title>
 </head>
 <body>
   <div class="app-shell">
     <header class="topbar">
       <div class="brandmark" aria-hidden="true"><span class="bullseye"></span></div>
-      <div class="brand"><strong>Calibration Lab</strong><small>Ten a day · as many as you like · v0.7</small></div>
+      <div class="brand"><strong>Calibration Lab</strong><small>Ten a day · as many as you like</small></div>
       <span class="status-pill" id="today-status">Daily practice</span>
     </header>
     <nav class="tabs" aria-label="Main navigation">
@@ -26,6 +26,13 @@
       <button class="tab" data-view="insights">Insights</button>
       <button class="tab" data-view="data">History & data</button>
     </nav>
+    <div class="version-status" role="status" aria-label="App version and update control">
+      <div class="version-status-text">
+        <strong>App version 0.8</strong>
+        <span>Running code: <strong id="runtime-version">not yet loaded</strong></span>
+      </div>
+      <a class="version-update-link" href="./?refresh=8" id="check-update">Check for update</a>
+    </div>
     <main>
       <section id="practice" class="view active" aria-label="Daily practice">
         <div class="section-heading"><div><p class="eyebrow">DAILY PRACTICE</p><h1>Make uncertainty measurable.</h1></div><div id="streak" class="streak">0 day streak</div></div>
@@ -42,6 +49,6 @@
     </main>
     <footer>Trivia: <a href="https://opentdb.com/" target="_blank" rel="noopener noreferrer">Open Trivia DB</a> (<a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0</a>), plus original offline questions. No account; history stays on this device until you export it.</footer>
   </div>
-  <script src="./app.js?v=7" defer></script>
+  <script src="./app.js?v=8" defer></script>
 </body>
 </html>
