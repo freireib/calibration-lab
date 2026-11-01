@@ -1,4 +1,4 @@
-# Calibration Lab — version 0.2
+# Calibration Lab — version 0.4
 
 Ten true/false questions to earn a daily streak, **unlimited extra questions**, confidence judgments, Brier loss, a calibration dashboard, and portable data exports.
 
@@ -50,3 +50,9 @@ Trivia data provided by [Open Trivia Database](https://opentdb.com/), released u
 The confidence calibration plot now includes 95% equal-tailed Bayesian credible intervals for each 10-point confidence bin, based on Jeffreys Beta(1/2,1/2) prior and binomial observations. Each bin lists number correct / total, observed accuracy, and its interval. With few questions, intervals will be wide. Questions within bins are treated as exchangeable; source/category dependence can undermine the nominal interpretation.
 
 The Insights panel also shows a rolling Brier trend with trailing windows of 10, 25, 50 or 100 scored judgments, in chronological order. The daily history remains available. Historical raw answers and `calibration-lab-data-v1` local-storage key are unchanged; there is no reset or migration.
+
+## v0.4 — topic relevance and confidence distribution
+
+New trivia drawn from Open Trivia DB is filtered to General Knowledge, Science & Nature, Computers, Mathematics, Geography, History, Politics, Art, and Animals. Previously downloaded but unanswered questions in the queue from excluded categories are removed at startup. Already answered history is unchanged; questions already allocated to an active daily session may still appear. Use **Skip — not my topic** for those, or any other unsuitable question. Skips do not count toward the daily streak goal or calibration scores.
+
+The Insights tab now includes an 11-bar histogram at 5-percentage-point confidence increments from 50% to 100%, with the count and fraction of 50% answers. Flagged questions are excluded. The app requests 50 mixed-category questions per API call (the API maximum) and keeps only eligible categories, using the offline fallback bank as needed. This topical filter does not independently fact-check trivia; continue flagging ambiguous or incorrect questions.
