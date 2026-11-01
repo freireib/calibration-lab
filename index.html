@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#132c37">
+  <meta name="description" content="Ten quick true/false forecasts each day. Train and track your probability calibration.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Calibration">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="./icon-192.png">
+  <link rel="stylesheet" href="./style.css">
+  <title>Calibration Lab</title>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brandmark" aria-hidden="true"><span class="bullseye"></span></div>
+      <div class="brand"><strong>Calibration Lab</strong><small>Ten questions. Better probabilities.</small></div>
+      <span class="status-pill" id="today-status">Daily practice</span>
+    </header>
+    <nav class="tabs" aria-label="Main navigation">
+      <button class="tab active" data-view="practice" aria-current="page">Practice</button>
+      <button class="tab" data-view="insights">Insights</button>
+      <button class="tab" data-view="data">History & data</button>
+    </nav>
+    <main>
+      <section id="practice" class="view active" aria-label="Daily practice">
+        <div class="section-heading"><div><p class="eyebrow">TODAY'S EXERCISE</p><h1>Make uncertainty measurable.</h1></div><div id="streak" class="streak">0 day streak</div></div>
+        <div id="practice-content" aria-live="polite"></div>
+      </section>
+      <section id="insights" class="view" aria-label="Insights">
+        <div class="section-heading"><div><p class="eyebrow">YOUR DATA</p><h1>Are you calibrated?</h1></div></div>
+        <div id="insights-content"></div>
+      </section>
+      <section id="data" class="view" aria-label="History and data">
+        <div class="section-heading"><div><p class="eyebrow">OWN YOUR DATA</p><h1>History & backups.</h1></div></div>
+        <div id="data-content"></div>
+      </section>
+    </main>
+    <footer>Trivia: <a href="https://opentdb.com/" target="_blank" rel="noopener noreferrer">Open Trivia DB</a> (<a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0</a>), plus original offline questions. No account; history stays on this device until you export it.</footer>
+  </div>
+  <script src="./app.js" defer></script>
+</body>
+</html>
