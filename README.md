@@ -1,4 +1,4 @@
-# Calibration Lab — version 0.6
+# Calibration Lab — version 0.7
 
 Ten true/false questions to earn a daily streak, **unlimited extra questions**, confidence judgments, Brier loss, a calibration dashboard, and portable data exports.
 
@@ -68,3 +68,9 @@ Mean Brier excluding exactly 50% confidence reports conditional score only for a
 ## v0.6 — reliability fix for Keep practicing
 
 Open Trivia DB limits requests to one per IP every five seconds, and may return response code 1 for an oversized category request or code 5 when throttled. The loader now waits between calls, attempts up to three requests, reduces batch size if there are insufficient category questions, and retries when a response contains only previously seen questions. It falls back to unused locally supplied trivia within the selected subjects. When no new questions can be found, the practice screen explicitly reports the issue rather than silently resetting to Keep practicing. All current records, question progress, streaks, and the existing storage key are retained.
+
+## v0.7 — finite question pool and visible errors
+
+The app now uses Open Trivia DB session tokens to avoid receiving the same questions again while a token remains valid (the provider expires tokens after 6 hours of inactivity). Its existing permanent local deduplication remains intact across token expiry. Each request follows the provider's five-second API rate limit; requests that return no results are reduced in size and retried up to a bounded number of times. Narrow subject selections warn that their true/false pools may run out. On any failure, an on-screen error appears above the Keep practicing / Retry button, with a one-click **Broaden subjects and retry** action. A partial refill warns how many questions were retrieved. The app header visibly displays v0.7, and script/style URL versioning helps distinguish an older cached app from the deployed release. Data remains local and unchanged, in the existing version 1 schema.
+
+**Important:** the provider's public category count includes all question formats, not just true/false, so the app does not invent an exact count of remaining T/F questions. The question pool is finite; if all questions in the selected subjects have been seen, broaden the selection or choose another source.
