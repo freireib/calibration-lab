@@ -1,31 +1,46 @@
-# Calibration Lab
+# Calibration Lab — version 0.2
 
-A small personal iPhone-friendly calibration game: ten true/false trivia judgments per day, with stated confidence, immediate feedback, Brier scores, and long-run calibration charts.
+Ten true/false questions to earn a daily streak, **unlimited extra questions**, confidence judgments, Brier loss, a calibration dashboard, and portable data exports.
 
-## Install on iPhone
+## Try on a Mac
 
-1. Open **Settings → Pages** in this GitHub repository.
-2. Under **Build and deployment**, choose **Deploy from a branch**, select `main` and `/(root)`, then tap **Save**.
-3. Once published, open **https://freireib.github.io/calibration-lab/** in Safari.
-4. Tap Share → **Add to Home Screen**, enable **Open as Web App** if prompted, then tap Add.
+With Python installed, open Terminal in this folder and run:
 
-You can also run this site locally with `python3 -m http.server 8000`.
+```bash
+python3 -m http.server 8000
+```
 
-## How it works
+Then open `http://localhost:8000/` in a browser. You can also open `index.html` directly for a basic preview, though app installation and offline caching require an HTTP(S) server.
 
-- Ten new true/false questions per calendar day.
-- Choose True/False and assign 50–100% confidence that your chosen answer is correct.
-- Feedback is revealed only after submitting; the response is saved first.
-- A daily Brier loss and a calibration-versus-confidence plot track performance over time.
-- You may flag an ambiguous or incorrect question; flagged responses are excluded from aggregate scores.
-- Question source: [Open Trivia DB](https://opentdb.com/) (CC BY-SA 4.0) with a small offline fallback bank.
+## Put on your iPhone
 
-## Your data
+1. Create a **new GitHub repository** (e.g. `calibration-lab`). It may be public because **your answers are not uploaded to the repository**; only the static code is hosted there. Use a private hosting service if you don't want the code public.
+2. Upload **the contents of this folder**, not the folder itself, to the repository root (branch `main`).
+3. In the repository: Settings → Pages → Build and deployment → Deploy from a branch → `main` / root. Save and visit the Pages URL that GitHub provides.
+4. Open that URL in **Safari on iPhone** → Share → Add to Home Screen → enable Open as Web App → Add.
+5. Start recording answers **from the Home Screen app**. Safari and an installed web app may have separate storage; don't assume questions completed in one will appear in the other.
 
-Answers are stored **locally in the browser/Home Screen app** using localStorage. They are not uploaded to GitHub or synchronized with your devices. Use the **History & data** tab to export a JSON backup periodically, or CSV for analysis in Python. Restore JSON to move between devices.
+The first question batch needs the internet if no offline cache is available. There is a small built-in offline question bank for testing and offline practice. This version requests fresh true/false questions from [Open Trivia Database](https://opentdb.com/api_config.php), which has a rate limit and may occasionally return errors. Existing local data works offline.
 
-The dashboard is exploratory; after only a few sessions its calibration bins are noisy. Multiple-choice and interval-estimation formats can be added later.
+## Data model
 
-## Privacy and caveats
+- `state.days[YYYY-MM-DD].questions[]` is an ordered, appendable list for a day. New batches are added when you request more questions.
+- `state.days[YYYY-MM-DD].responses[]` corresponds to its questions, preserving the *entire probability judgment*.
+- Each response contains `kind: "boolean"`, `chosen`, `confidence`, `probTrue`, `correct`, `flagged`, `brier`, and `timestamp`.
+- `kind` leaves a path to add multiple-choice or numerical intervals later, without overwriting historical judgments.
+- A flagged question remains in history but is removed from calibration metrics.
 
-This repository contains source code only, no personal results. Anyone can view the code because GitHub Pages is being used for free hosting. Question quality is not independently verified; flag unreliable questions.
+The Brier loss for this binary question is `(probTrue - actualTrue)^2`. Lower is better. For binary questions, guessing randomly gives expected score 0.25.
+
+## Privacy, reliability, and limits
+
+- No login, tracking, or telemetry, and no app database server.
+- Answers are stored using the browser's `localStorage`, not automatically backed up to iCloud or GitHub. **Export JSON regularly** and retain the files somewhere safe. Use JSON restore if moving to another device.
+- Source trivia are crowdsourced and can be wrong or ambiguous. Flag any questionable question; the flag excludes it from aggregate scoring.
+- The chart is exploratory, not a statistical test of miscalibration. Each confidence bin reports its count; more than 50–100 resolved judgments is preferable.
+- The device's local calendar determines each day. Ten answered questions qualify that day for a streak; extra questions remain in the same day and count toward your statistics. A flagged question still counts as answered toward the streak but is excluded from calibration metrics. If all fresh question sources are exhausted, the app offers a retry and preserves your history.
+- This is a personal prototype, not production-hardened software. Questions are not independently verified.
+
+## Attribution
+
+Trivia data provided by [Open Trivia Database](https://opentdb.com/), released under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Open Trivia DB data may be used and redistributed subject to that license. Original offline fallback questions are included for convenience.
