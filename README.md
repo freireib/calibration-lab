@@ -1,4 +1,4 @@
-# Calibration Lab — version 0.4
+# Calibration Lab — version 0.5
 
 Ten true/false questions to earn a daily streak, **unlimited extra questions**, confidence judgments, Brier loss, a calibration dashboard, and portable data exports.
 
@@ -56,3 +56,11 @@ The Insights panel also shows a rolling Brier trend with trailing windows of 10,
 New trivia drawn from Open Trivia DB is filtered to General Knowledge, Science & Nature, Computers, Mathematics, Geography, History, Politics, Art, and Animals. Previously downloaded but unanswered questions in the queue from excluded categories are removed at startup. Already answered history is unchanged; questions already allocated to an active daily session may still appear. Use **Skip — not my topic** for those, or any other unsuitable question. Skips do not count toward the daily streak goal or calibration scores.
 
 The Insights tab now includes an 11-bar histogram at 5-percentage-point confidence increments from 50% to 100%, with the count and fraction of 50% answers. Flagged questions are excluded. The app requests 50 mixed-category questions per API call (the API maximum) and keeps only eligible categories, using the offline fallback bank as needed. This topical filter does not independently fact-check trivia; continue flagging ambiguous or incorrect questions.
+
+## v0.5 — subject selection and selective scoring
+
+The Practice tab has a saved multi-subject selection. New questions use the selected topics; existing questions already assigned to today's session remain accessible and may be skipped. For one or two subjects the app requests a specific category from Open Trivia DB, which only supports one category per call; with broader selections the app fetches a mixed group and filters locally. Fallback offline questions respect the same selections. Default practice subjects exclude Other / entertainment.
+
+The Insights tab has a separate multi-subject filter applied retrospectively to stored answers; by default it includes all subjects, including old anime/video-game questions grouped under Other / entertainment. Existing history and streak progress remain unchanged. All plots and summary statistics respond to the Insights subject filter.
+
+Mean Brier excluding exactly 50% confidence reports conditional score only for answers at greater than 50% confidence. The alongside coverage metric is the fraction of subject-filtered scored answers retained. The full Brier is always shown and remains the primary score. The rolling Brier chart can plot either full or conditional Brier. Historic exports remain version 1 with two optional subject-preference fields; importing older backups is backward compatible.
