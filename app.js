@@ -170,7 +170,7 @@ async function startToday(){
  try{
   const result=await loadQuestions(message=>{const p=target.querySelector('.muted');if(p)p.textContent=message;});
   if(state.questionQueue.length===0){
-   target.replaceChildren();const error=el('div','panel');
+   target.replaceChildren();target.append(makeSubjectPicker('practice'));const error=el('div','panel');
    error.append(el('h2','','No new questions available'),el('p','muted',result.issue||'No unused questions found in the selected subjects.'),el('p','sm muted','Try again shortly or select additional subjects. Your previous answers and streak are safe.'));
    error.append(makeButton('Try again','primary',startToday));target.append(error);return;
   }
