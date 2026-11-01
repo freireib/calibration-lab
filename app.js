@@ -1,15 +1,18 @@
-/* Calibration Lab v0.3: calibration credible intervals and rolling Brier trends. */
+/* Calibration Lab v0.4: focused topics, confidence histogram, optional skip. */
 'use strict';
 const KEY='calibration-lab-data-v1';
 const DAILY_GOAL=10;
 const BATCH_SIZE=10;
+// Broad factual subjects: avoid obscure entertainment fandoms in calibration training.
+const CORE_CATEGORIES=new Set(['General Knowledge','Science & Nature','Science: Computers','Science: Mathematics','Geography','History','Politics','Art','Animals']);
+function relevantQuestion(q){return q?.source!=='Open Trivia DB'||CORE_CATEGORIES.has(q.category);}
 const $=(selector)=>document.querySelector(selector);
 const el=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;};
 const round=(v,d=2)=>Number(v).toFixed(d);
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 function dateKey(date=new Date()){return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;}
 function freshState(){return {version:1,days:{},questionQueue:[],seen:[]};}
-function load(){try{const v=JSON.parse(localStorage.getItem(KEY));if(v&&v.version===1&&v.days&&typeof v.days==='object'&&Array.isArray(v.seen)&&Array.isArray(v.questionQueue))return v;}catch(e){console.warn('Could not load local history',e);}return freshState();}
+function load(){try{const v=JSON.parse(localStorage.getItem(KEY));if(v&&v.version===1&&v.days&&typeof v.days==='object'&&Array.isArray(v.seen)&&Array.isArray(v.questionQueue)){v.questionQueue=v.questionQueue.filter(relevantQuestion);return v;}}catch(e){console.warn('Could not load local history',e);}return freshState();}
 let state=load(),selected=null,confidence=75,starting=false,apiError=false,rollingWindow=25;
 function save(){try{localStorage.setItem(KEY,JSON.stringify(state));return true;}catch(e){alert('Unable to save local data. Storage may be full or unavailable. Export your history now.');return false;}}
 function hash(s){let h=2166136261;for(let i=0;i<s.length;i++){h=Math.imul(h^s.charCodeAt(i),16777619);}return (h>>>0).toString(36);}
@@ -60,16 +63,18 @@ const offlineBank=offlineRaw.map(row=>qObj(row[0],row[1],row[2]));
 function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
 function decodeURIComponentSafe(s){try{return decodeURIComponent(s);}catch{return s;}}
 async function loadQuestions(){
+ state.questionQueue=state.questionQueue.filter(relevantQuestion);
  const seen=new Set([...state.seen,...state.questionQueue.map(q=>q.id)]);
  if(state.questionQueue.length>=BATCH_SIZE)return;
  try{
   const ctl=new AbortController();const timer=setTimeout(()=>ctl.abort(),9000);
-  let r;try{r=await fetch('https://opentdb.com/api.php?amount=30&type=boolean&encode=url3986',{signal:ctl.signal,cache:'no-store'});}finally{clearTimeout(timer);}
+  let r;try{r=await fetch('https://opentdb.com/api.php?amount=50&type=boolean&encode=url3986',{signal:ctl.signal,cache:'no-store'});}finally{clearTimeout(timer);}
   if(!r.ok)throw Error('HTTP '+r.status);
   const data=await r.json();if(data.response_code!==0||!Array.isArray(data.results))throw Error('Trivia API: '+data.response_code);
   for(const item of data.results){if(item.type!=='boolean')continue;
    const prompt=decodeURIComponentSafe(item.question),answer=decodeURIComponentSafe(item.correct_answer)==='True';
    const q=qObj(prompt,answer,decodeURIComponentSafe(item.category),'Open Trivia DB',decodeURIComponentSafe(item.difficulty||''));
+   if(!relevantQuestion(q))continue;
    if(!seen.has(q.id)){state.questionQueue.push(q);seen.add(q.id);}
   }
  }catch(e){console.info('Trivia unavailable; use offline questions.',e);apiError=true;}
@@ -187,6 +192,12 @@ function renderPractice(){
    const record={kind:'boolean',chosen:selected,confidence,probTrue:pTrue,correct,flagged:false,brier:(pTrue-Number(q.answer))**2,timestamp:new Date().toISOString()};
    day.responses.push(record);if(!save()){day.responses.pop();return;}render();
   });submit.disabled=selected===null;card.append(submit);
+  const skip=makeButton('Skip — not my topic','secondary-btn',()=>{
+   const removed=day.questions.splice(idx,1)[0];
+   if(!save()){day.questions.splice(idx,0,removed);return;}
+   selected=null;confidence=75;render();
+  });skip.style.marginTop='10px';card.append(skip);
+  card.append(el('p','legend','Skipped questions do not count toward the daily goal or calibration statistics.'));
  }
  node.append(card);
 }
@@ -258,6 +269,23 @@ function makeCalibrationTable(bins){
  for(const b of bins){const tr=el('tr');for(const str of [b.label,`${b.k}/${b.n}`,`${round(100*b.accuracy,0)}%`,`${round(100*b.low,0)}–${round(100*b.high,0)}%`])tr.append(el('td','',str));body.append(tr);}
  table.append(body);return table;
 }
+function makeConfidenceHistogramSvg(rows){
+ const s=svg('svg',{viewBox:'0 0 390 242',role:'img','aria-label':'Histogram of confidence ratings in 5-percentage-point increments from 50 to 100 percent'});
+ const counts=Array(11).fill(0);
+ for(const r of rows){if(Number.isFinite(r.confidence)&&r.confidence>=50&&r.confidence<=100)counts[Math.round((r.confidence-50)/5)]++;}
+ const L=40,R=373,T=20,B=190,slot=(R-L)/11,bar=slot*.73;
+ const step=Math.max(1,Math.ceil(Math.max(1,...counts)/4)),maxY=step*Math.ceil(Math.max(1,...counts)/step),yp=n=>B-n/maxY*(B-T);
+ for(let n=0;n<=maxY;n+=step){const y=yp(n);s.append(svg('line',{x1:L,y1:y,x2:R,y2:y,stroke:'#e5ebeb','stroke-width':1}),svg('text',{x:L-7,y:y+3,'text-anchor':'end',class:'chart-tick'},String(n)));}
+ counts.forEach((n,i)=>{
+  const x=L+slot*(i+.5),h=n/maxY*(B-T);
+  const rect=svg('rect',{x:x-bar/2,y:B-h,width:bar,height:h,rx:2,fill:i===0?'#a56513':'#147966'});
+  rect.append(svg('title',{},`${50+i*5}% confidence: ${n} answers`));s.append(rect);
+  if(n)s.append(svg('text',{x,y:Math.max(T-3,B-h-5),'text-anchor':'middle',class:'chart-tick'},String(n)));
+  if(i%2===0)s.append(svg('text',{x,y:B+17,'text-anchor':'middle',class:'chart-tick'},`${50+i*5}%`));
+ });
+ s.append(svg('text',{x:(L+R)/2,y:235,'text-anchor':'middle',class:'chart-label'},'Confidence your chosen answer is correct'));
+ return s;
+}
 function makeRollingBrierSvg(rows,windowSize){
  const s=svg('svg',{viewBox:'0 0 390 205',role:'img', 'aria-label':`Mean Brier loss over the previous ${windowSize} scored questions, ordered by when answered`});
  const L=48,R=366,T=18,B=163,yp=v=>B-clamp(v,0,1)*(B-T);
@@ -286,6 +314,9 @@ function renderInsights(){const node=$('#insights-content');node.replaceChildren
  const bins=calibrationBins(rows);
  const a=el('div','panel chart');a.append(el('h3','','Calibration by confidence'));a.append(makeCalibrationSvg(bins),makeCalibrationTable(bins));
  a.append(el('p','legend','Green dots show observed correctness; amber bars are equal-tailed 95% Bayesian credible intervals using Jeffreys’ Beta(½,½) prior. Dashed diagonal = perfect calibration. Counts are shown for each group. Intervals assume exchangeable questions within each bin; they describe uncertainty in the group accuracy, not the accuracy of any individual answer.'));node.append(a);
+ const fifty=rows.filter(r=>r.confidence===50).length;
+ const hist=el('div','panel chart');hist.append(el('h3','','Confidence histogram'),makeConfidenceHistogramSvg(rows));
+ hist.append(el('p','legend',`${fifty} of ${rows.length} scored answers (${round(100*fifty/rows.length,1)}%) used 50% confidence. Counts cover every 5-percentage-point setting; flagged questions are excluded.`));node.append(hist);
  const rolling=el('div','panel chart');rolling.append(el('h3','','Rolling Brier score'));
  const controls=el('div','trend-controls');controls.append(el('span','sm muted','Previous questions:'));
  for(const w of [10,25,50,100]){const button=makeButton(String(w),`window-btn ${rollingWindow===w?'active':''}`,()=>{rollingWindow=w;renderInsights();});button.setAttribute('aria-pressed',String(rollingWindow===w));controls.append(button);}
