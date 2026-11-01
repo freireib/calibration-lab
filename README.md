@@ -1,4 +1,4 @@
-# Calibration Lab — version 0.7
+# Calibration Lab — version 0.8
 
 Ten true/false questions to earn a daily streak, **unlimited extra questions**, confidence judgments, Brier loss, a calibration dashboard, and portable data exports.
 
@@ -74,3 +74,7 @@ Open Trivia DB limits requests to one per IP every five seconds, and may return 
 The app now uses Open Trivia DB session tokens to avoid receiving the same questions again while a token remains valid (the provider expires tokens after 6 hours of inactivity). Its existing permanent local deduplication remains intact across token expiry. Each request follows the provider's five-second API rate limit; requests that return no results are reduced in size and retried up to a bounded number of times. Narrow subject selections warn that their true/false pools may run out. On any failure, an on-screen error appears above the Keep practicing / Retry button, with a one-click **Broaden subjects and retry** action. A partial refill warns how many questions were retrieved. The app header visibly displays v0.7, and script/style URL versioning helps distinguish an older cached app from the deployed release. Data remains local and unchanged, in the existing version 1 schema.
 
 **Important:** the provider's public category count includes all question formats, not just true/false, so the app does not invent an exact count of remaining T/F questions. The question pool is finite; if all questions in the selected subjects have been seen, broaden the selection or choose another source.
+
+## v0.8 — visible version and update check
+
+The navigation now shows **App version 0.8** (read directly from the HTML) and **Running code: v0.8** (populated by the JavaScript). If the two disagree, the installed Home Screen app has mismatched or cached assets. The **Check for update** link asks the installed service worker to check for updates and reloads the current site with a fresh query string. Both code and CSS URLs are versioned, and the service worker cache name is rotated to v8. Reloading does not modify local quiz records. Never uninstall the Home Screen app or clear site data when diagnosing updates unless you've exported a backup.
