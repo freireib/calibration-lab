@@ -8,3 +8,6 @@
 
 /* v0.7 finite-bank warnings */
 .subject-caution{margin:0 0 14px;padding:10px 13px;font-size:12px;line-height:1.5;color:#77500f;background:#fff4df;border:1px solid #f0d7a7;border-radius:12px}.supply-warning{margin-bottom:15px}.supply-warning strong{display:block;margin-bottom:5px}.supply-warning p{margin:5px 0 10px}.supply-warning .secondary-btn{border-color:#d9b970;background:#fff9ed}
+
+/* v0.8 highly visible build diagnostics */
+.version-status{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;margin:-9px 0 22px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:#fff}.version-status-text{display:flex;flex-wrap:wrap;gap:7px 13px;align-items:center;font-size:13px}.version-status-text>strong{font-size:15px;color:var(--ink);font-variant-numeric:tabular-nums}.version-status-text span{font-size:12px;color:var(--muted)}.version-update-link{color:var(--teal);font-size:12px;font-weight:700;text-decoration:underline;cursor:pointer;white-space:nowrap}
