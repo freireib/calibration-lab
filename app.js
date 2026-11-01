@@ -1,4 +1,4 @@
-/* Calibration Lab v0.6: resilient category loading and transparent retry handling. */
+/* Calibration Lab v0.7: token-backed question supply, visible limits, and version diagnostics. */
 'use strict';
 const KEY='calibration-lab-data-v1';
 const DAILY_GOAL=10;
@@ -48,7 +48,7 @@ const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 function dateKey(date=new Date()){return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;}
 function freshState(){return hydrateState({version:1,days:{},questionQueue:[],seen:[]});}
 function load(){try{const v=JSON.parse(localStorage.getItem(KEY));if(v&&v.version===1&&v.days&&typeof v.days==='object'&&Array.isArray(v.seen)&&Array.isArray(v.questionQueue))return hydrateState(v);}catch(e){console.warn('Could not load local history',e);}return freshState();}
-let state=load(),selected=null,confidence=75,starting=false,apiError=false,rollingWindow=25,rollingExclude50=false,practiceChooserOpen=false,insightChooserOpen=false;
+let state=load(),selected=null,confidence=75,starting=false,apiError=false,rollingWindow=25,rollingExclude50=false,practiceChooserOpen=false,insightChooserOpen=false,supplyNotice=null;
 function save(){try{localStorage.setItem(KEY,JSON.stringify(state));return true;}catch(e){alert('Unable to save local data. Storage may be full or unavailable. Export your history now.');return false;}}
 function hash(s){let h=2166136261;for(let i=0;i<s.length;i++){h=Math.imul(h^s.charCodeAt(i),16777619);}return (h>>>0).toString(36);}
 function qObj(prompt,answer,category='Mixed',source='Offline practice',difficulty=''){return {id:hash(prompt.toLowerCase().replace(/\s+/g,' ').trim()),type:'boolean',prompt,answer,category,source,difficulty};}
@@ -97,59 +97,94 @@ const offlineRaw=[
 const offlineBank=offlineRaw.map(row=>qObj(row[0],row[1],row[2]));
 function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
 function decodeURIComponentSafe(s){try{return decodeURIComponent(s);}catch{return s;}}
-// The trivia provider permits one request per IP every five seconds.
-// Retry throttling, category shortages and duplicate-only results, within a bound.
+// Open Trivia DB's token tracks questions handed out in the active session,
+// while state.seen continues to prevent repeats across expired sessions.
 const TRIVIA_GAP_MS=5800;
+const TOKEN_IDLE_MS=5*60*60*1000; // The provider expires tokens after six hours idle.
 let nextTriviaRequestAt=0;
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+async function triviaGet(url,onProgress){
+ const wait=Math.max(0,nextTriviaRequestAt-Date.now());
+ if(wait>0){onProgress('Waiting for trivia service ('+Math.ceil(wait/1000)+'s)…');await delay(wait);}
+ const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),9000);
+ nextTriviaRequestAt=Date.now()+TRIVIA_GAP_MS;
+ try{
+  const response=await fetch(url,{signal:ctl.signal,cache:'no-store'});
+  if(!response.ok)throw Error('HTTP '+response.status);
+  return await response.json();
+ }finally{clearTimeout(timer);}
+}
+async function obtainTriviaToken(onProgress){
+ const prev=state.triviaToken;
+ if(prev&&typeof prev.value==='string'&&Date.now()-(prev.lastUsed||0)<TOKEN_IDLE_MS)return prev.value;
+ // A token is helpful, not mandatory: continue without one if token service fails.
+ try{
+  onProgress('Starting a nonrepeating trivia session…');
+  const data=await triviaGet('https://opentdb.com/api_token.php?command=request',onProgress);
+  if(data.response_code===0&&typeof data.token==='string'){
+   state.triviaToken={value:data.token,lastUsed:Date.now()};
+   save();
+   return data.token;
+  }
+ }catch(err){console.info('Could not start trivia session; using local duplicate filter',err);}
+ delete state.triviaToken;return null;
+}
 async function loadQuestions(onProgress=()=>{}){
  state.questionQueue=state.questionQueue.filter(q=>state.practiceSubjects.includes(subjectOf(q)));
+ const original=state.questionQueue.length;
  const seen=new Set([...state.seen,...state.questionQueue.map(q=>q.id)]);
- if(state.questionQueue.length>=BATCH_SIZE)return {count:state.questionQueue.length,issue:null};
- const choices=SUBJECTS.filter(t=>state.practiceSubjects.includes(t.id)&&t.api!==null);
+ if(state.questionQueue.length>=BATCH_SIZE)return {count:state.questionQueue.length,added:0,issue:null};
+ const choices=SUBJECTS.filter(x=>state.practiceSubjects.includes(x.id)&&x.api!==null);
  const targeted=state.practiceSubjects.length<=2&&choices.length===state.practiceSubjects.length;
- let amount=targeted?10:50,issue=null;
+ let amount=targeted?10:50,issue=null,attempts=0;
+ let token=await obtainTriviaToken(onProgress);
  for(let attempt=0;attempt<3&&state.questionQueue.length<BATCH_SIZE;attempt++){
+  attempts++;
   const target=targeted?choices[(Math.floor(Math.random()*choices.length)+attempt)%choices.length]:null;
-  const wait=Math.max(0,nextTriviaRequestAt-Date.now());
-  if(wait>0){onProgress('Waiting for trivia service · '+Math.ceil(wait/1000)+'s');await delay(wait);}
-  onProgress('Finding new '+(target?target.label.toLowerCase():'trivia')+' questions…');
-  const url='https://opentdb.com/api.php?amount='+amount+'&type=boolean&encode=url3986'+(target?'&category='+target.api:'');
-  const ctl=new AbortController();
-  const timer=setTimeout(()=>ctl.abort(),9000);
-  nextTriviaRequestAt=Date.now()+TRIVIA_GAP_MS;
-  try{
-   const response=await fetch(url,{signal:ctl.signal,cache:'no-store'});
-   if(!response.ok)throw Error('HTTP '+response.status);
-   const data=await response.json();
-   if(data.response_code===5){
-    issue='The trivia service is temporarily rate-limiting requests.';
-    nextTriviaRequestAt=Math.max(nextTriviaRequestAt,Date.now()+6500);
-    continue;
-   }
-   if(data.response_code===1||data.response_code===4){
-    issue='There are not enough fresh true/false questions in this subject.';
-    if(amount>1){amount=Math.max(1,Math.floor(amount/2));continue;}
-    break;
-   }
-   if(data.response_code!==0||!Array.isArray(data.results)){
-    issue='The trivia service could not provide questions (code '+data.response_code+').';
-    break;
-   }
-   const before=state.questionQueue.length;
-   for(const item of data.results){
-    if(item.type!=='boolean')continue;
-    const prompt=decodeURIComponentSafe(item.question);
-    const answer=decodeURIComponentSafe(item.correct_answer)==='True';
-    const q=qObj(prompt,answer,decodeURIComponentSafe(item.category),'Open Trivia DB',decodeURIComponentSafe(item.difficulty||''));
-    if(!state.practiceSubjects.includes(subjectOf(q))||seen.has(q.id))continue;
-    state.questionQueue.push(q);seen.add(q.id);
-   }
-   issue=state.questionQueue.length===before?'The available questions in this subject have already been answered.':null;
-  }catch(err){
-   issue=err?.name==='AbortError'?'The trivia request timed out.':'Unable to reach the trivia service.';
-   console.info('Trivia load attempt unsuccessful',err);
-  }finally{clearTimeout(timer);}
+  onProgress('Finding unused '+(target?target.label.toLowerCase():'trivia')+' questions…');
+  const url='https://opentdb.com/api.php?amount='+amount+'&type=boolean&encode=url3986'+(target?'&category='+target.api:'')+(token?'&token='+encodeURIComponent(token):'');
+  let data;
+  try{data=await triviaGet(url,onProgress);}
+  catch(err){
+   issue=err?.name==='AbortError'?'Trivia service timed out.':'Trivia service could not be reached.';
+   console.info('Trivia request failed',err);
+   continue;
+  }
+  if(data.response_code===5){
+   issue='Trivia service is rate-limiting requests. Please retry shortly.';
+   nextTriviaRequestAt=Math.max(nextTriviaRequestAt,Date.now()+7000);
+   continue;
+  }
+  if(data.response_code===3){
+   // Token expired unexpectedly. A new one can be requested on the next try.
+   delete state.triviaToken;token=null;issue='Trivia session expired; please retry.';
+   continue;
+  }
+  if(data.response_code===4){
+   // An exhausted token cannot produce new questions; don't reset and repeat old ones.
+   issue='All available questions in this trivia session have been used for the selected subjects.';
+   break;
+  }
+  if(data.response_code===1){
+   issue='Not enough remaining true/false questions in the selected subject pool for this request.';
+   if(amount>1){amount=Math.max(1,Math.floor(amount/2));continue;}
+   break;
+  }
+  if(data.response_code!==0||!Array.isArray(data.results)){
+   issue='Trivia provider returned an error (code '+data.response_code+').';
+   break;
+  }
+  if(token&&state.triviaToken)state.triviaToken.lastUsed=Date.now();
+  let newInBatch=0;
+  for(const item of data.results){
+   if(item.type!=='boolean')continue;
+   const prompt=decodeURIComponentSafe(item.question);
+   const q=qObj(prompt,decodeURIComponentSafe(item.correct_answer)==='True',decodeURIComponentSafe(item.category),'Open Trivia DB',decodeURIComponentSafe(item.difficulty||''));
+   if(!state.practiceSubjects.includes(subjectOf(q))||seen.has(q.id))continue;
+   state.questionQueue.push(q);seen.add(q.id);newInBatch++;
+  }
+  if(newInBatch===0)issue='No new questions were found; returned items were already answered or outside your selected subjects.';
+  else issue=null;
  }
  if(state.questionQueue.length<BATCH_SIZE){
   for(const q of shuffle([...offlineBank])){
@@ -159,8 +194,10 @@ async function loadQuestions(onProgress=()=>{}){
   }
  }
  save();
- return {count:state.questionQueue.length,issue};
+ const count=state.questionQueue.length;
+ return {count,added:count-original,attempts,issue:issue||(count===0?'No unused questions found in the selected subjects.':null)};
 }
+
 async function startToday(){
  if(starting)return;
  if(state.days[dateKey()]){render();return;}
